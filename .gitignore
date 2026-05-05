@@ -6,7 +6,13 @@ __pycache__/
 .env
 .env.*
 
-data/
+# Ignore data contents, but allow DVC pointer files
+data/**
+!data/
+!data/**/*.dvc
+!data/**/.gitkeep
+
+
 models/
 results/
 reports/figures/
