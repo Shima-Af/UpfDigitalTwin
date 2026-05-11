@@ -1,0 +1,26 @@
+# configs/paths.yaml — all file-system paths, relative to project root
+
+traffic_forecaster:
+  dir: data/external/traffic_forecaster
+  predictions:        data/external/traffic_forecaster/predictions_test.npy
+  targets:            data/external/traffic_forecaster/targets_test.npy
+  cluster_series:     data/external/traffic_forecaster/cluster_series.npy
+  cluster_assignments: data/external/traffic_forecaster/cluster_assignments.parquet
+  cluster_bs_map:     data/external/traffic_forecaster/cluster_bs_map.json
+  bs_locations:       data/external/traffic_forecaster/bs_locations.parquet
+  forecast_eval_summary: data/external/traffic_forecaster/forecast_eval_summary.json
+
+profiling_twin:
+  dir:      data/external/profiling_twin
+  params:   data/external/profiling_twin/params.yaml
+  manifest: data/external/profiling_twin/models/manifest.json
+  models:   data/external/profiling_twin/models
+  switching_costs: data/external/profiling_twin/switching_costs.yaml
+
+results:
+  dir:              results/threshold_demo
+  metrics:          results/threshold_demo/metrics.json
+  rollout_threshold:    results/threshold_demo/rollout_threshold.parquet
+  rollout_static_dpdk:  results/threshold_demo/rollout_static_dpdk.parquet
+  rollout_static_usr:   results/threshold_demo/rollout_static_usr.parquet
+  rollout_oracle:       results/threshold_demo/rollout_oracle.parquet

@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find /home/ubuntu -maxdepth 5 -name \"train.py\" -o -name \"params.yaml\" -o -name \"config.yaml\" 2>/dev/null | grep -v \"/.git/\" | head -20)",
+      "Read(//home/ubuntu/**)",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -c \"import sklearn; import pandas; import numpy; import joblib; import yaml; print\\('All packages available'\\)\")",
+      "Bash(aws sts *)",
+      "Bash(aws s3 *)",
+      "Bash(dvc status *)",
+      "Bash(git ls-remote *)",
+      "Bash(cp /home/ubuntu/UPF_Forecasting/UpfTrafficForecaster/results/cluster_first/Netflix/K10/predictions_test.npy /home/ubuntu/UPF_NDT/data/external/traffic_forecaster/)",
+      "Bash(cp /home/ubuntu/UPF_Forecasting/UpfTrafficForecaster/results/cluster_first/Netflix/K10/targets_test.npy /home/ubuntu/UPF_NDT/data/external/traffic_forecaster/)",
+      "Bash(cp /home/ubuntu/UPF_Forecasting/UpfTrafficForecaster/data/cluster_first/Netflix/K10/cluster_series.npy /home/ubuntu/UPF_NDT/data/external/traffic_forecaster/)",
+      "Bash(cp /home/ubuntu/UPF_Forecasting/UpfTrafficForecaster/data/cluster_first/Netflix/K10/cluster_assignments.parquet /home/ubuntu/UPF_NDT/data/external/traffic_forecaster/)",
+      "Bash(cp /home/ubuntu/UPF_Forecasting/UpfTrafficForecaster/data/cluster_first/Netflix/K10/cluster_bs_map.json /home/ubuntu/UPF_NDT/data/external/traffic_forecaster/)",
+      "Bash(python3 scripts/smoke_test_artifacts.py)",
+      "Bash(python3 scripts/run_threshold_demo.py)",
+      "Bash(mkdir -p /home/ubuntu/.claude/projects/-home-ubuntu-UPF_NDT/memory/)",
+      "Bash(dvc get *)",
+      "Bash(python3 -W ignore -c ' *)",
+      "Bash(cp /home/ubuntu/UPF_Forecasting/UpfTrafficForecaster/data/graphs/bs_locations.parquet data/external/traffic_forecaster/bs_locations.parquet && ls -lh data/external/traffic_forecaster/bs_locations.parquet)",
+      "Bash(python3 -W ignore scripts/smoke_test_artifacts.py)",
+      "Bash(pkill -f run_threshold_demo)",
+      "Bash(python3 -W ignore scripts/run_threshold_demo.py)",
+      "Bash(pip install *)",
+      "Bash(python3 -c \"import plotly; print\\('plotly', plotly.__version__\\)\")"
+    ],
+    "additionalDirectories": [
+      "/home/ubuntu/.claude/projects/-home-ubuntu-UPF_NDT",
+      "/home/ubuntu/UPF_Forecasting/UpfTrafficForecaster/data/graphs"
+    ]
+  }
+}

@@ -1,0 +1,44 @@
+# configs/scenario.yaml — scenario and twin parameters
+
+# --- Traffic ---
+traffic:
+  service: Netflix          # must match forecast_eval_summary service field
+  selected_k: 10            # number of clusters; must match K dimension in arrays
+
+  calibration:
+    mode: global_alpha      # only supported mode for now
+    alpha_gbps_per_norm: 0.12  # 1 normalised unit = 0.12 Gbps
+
+  time_step_minutes: 15     # NetMob resolution
+
+# --- UPF QoS budget (used to compute is_safe in the twin) ---
+upf:
+  qos_budget:
+    delay_budget_us:           200.0  # downlink delay must be ≤ this
+    max_loss_pkts_per_interval:  0.0  # zero tolerance for predicted packet loss
+
+# --- Threshold derivation (replaces hardcoded thresholds) ---
+threshold:
+  safety_margin_mbps: 10.0
+  hysteresis_band: auto       # "auto" → 2 × forecast MAE, or float in Mbps, or 0
+  cooldown_steps: 1
+
+# --- Switching cost model ---
+# Activation durations are loaded from data/external/profiling_twin/switching_costs.yaml
+# (raw measurements with provenance).  The scaling rule used at run-time is:
+#   spike_wh(load) = surrogate_steady_power_w(load) × activation_duration_s / 3600
+upf_switching:
+  # How to account for activation within a 15-min step:
+  #   sub_step   — recommended: weighted-average power within the switching step,
+  #                old UPF serves for activation_s, new UPF for the rest. The
+  #                energy spike is paid once.
+  #   round_down — switch is treated as instant within the step (only spike paid)
+  #   round_up   — DPDK unavailable for the entire next step (worst-case)
+  accounting: sub_step
+
+  # Prewarm: keep DPDK in standby (always-on) so we pay continuous standby cost
+  # but switching is instant from the model's perspective.  When false, DPDK
+  # cold-starts and the activation cost above applies.
+  prewarm:
+    enabled: true
+    standby_power_watts: 0.05
