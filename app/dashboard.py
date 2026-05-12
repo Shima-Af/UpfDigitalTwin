@@ -7,7 +7,6 @@ Run from the project root:
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -17,13 +16,12 @@ import streamlit as st
 from plotly.subplots import make_subplots
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.utils.config import load_configs
-from src.twin.digital_twin import DigitalTwin
-from src.twin.threshold_derivation import derive_thresholds, load_forecast_mae_gbps
-from src.twin.upf_profile import UPFResult
-from src.policies.hysteresis import HysteresisPolicy
+from upf_digital_twin.utils.config import load_configs
+from upf_digital_twin.twin.digital_twin import DigitalTwin
+from upf_digital_twin.twin.threshold_derivation import derive_thresholds, load_forecast_mae_gbps
+from upf_digital_twin.twin.upf_profile import UPFResult
+from upf_digital_twin.policies.hysteresis import HysteresisPolicy
 
 # ── Page config ──────────────────────────────────────────────────────────────
 st.set_page_config(page_title="UPF Digital Twin", page_icon="📡", layout="wide")

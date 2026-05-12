@@ -81,6 +81,42 @@ class DigitalTwin:
         self.step_h = self.step_s / 3600.0
 
     # ------------------------------------------------------------------
+    # Convenience constructor for external consumers (e.g. RL gym envs)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_data_dir(
+        cls,
+        data_dir: str | Path,
+        scenario_cfg: dict,
+    ) -> "DigitalTwin":
+        """Build a twin from a data directory using the standard layout.
+
+        Expected layout under ``data_dir``::
+
+            data_dir/
+              profiling_twin/
+                models/
+                  manifest.json
+                  layer1/...
+                  layer2/...
+                switching_costs.yaml
+
+        ``scenario_cfg`` is a dict mirroring ``configs/scenario.yaml`` —
+        in particular it must contain ``upf``, ``upf_switching``, and
+        ``traffic.time_step_minutes``.
+        """
+        data_dir = Path(data_dir).resolve()
+        paths_cfg = {
+            "profiling_twin": {
+                "models":          "profiling_twin/models",
+                "manifest":        "profiling_twin/models/manifest.json",
+                "switching_costs": "profiling_twin/switching_costs.yaml",
+            },
+        }
+        return cls(scenario_cfg=scenario_cfg, paths_cfg=paths_cfg, project_root=data_dir)
+
+    # ------------------------------------------------------------------
     # Stateless lookup (used by dashboard, sweeps, etc.)
     # ------------------------------------------------------------------
 

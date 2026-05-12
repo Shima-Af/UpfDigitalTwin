@@ -8,22 +8,20 @@ Run from the project root:
 from __future__ import annotations
 
 import json
-import sys
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.utils.config import load_configs
-from src.data.traffic_loader import load_traffic_artifacts
-from src.twin.digital_twin import DigitalTwin
-from src.twin.threshold_derivation import derive_thresholds, load_forecast_mae_gbps
-from src.policies.static     import StaticDPDKPolicy, StaticUSRPolicy
-from src.policies.threshold  import ThresholdPolicy
-from src.policies.oracle     import OracleThresholdPolicy
-from src.policies.hysteresis import HysteresisPolicy
-from src.evaluation.rollout  import run_rollout, precompute_twin_for_rollouts
-from src.evaluation.metrics  import compute_metrics
+from upf_digital_twin.utils.config import load_configs
+from upf_digital_twin.data.traffic_loader import load_traffic_artifacts
+from upf_digital_twin.twin.digital_twin import DigitalTwin
+from upf_digital_twin.twin.threshold_derivation import derive_thresholds, load_forecast_mae_gbps
+from upf_digital_twin.policies.static     import StaticDPDKPolicy, StaticUSRPolicy
+from upf_digital_twin.policies.threshold  import ThresholdPolicy
+from upf_digital_twin.policies.oracle     import OracleThresholdPolicy
+from upf_digital_twin.policies.hysteresis import HysteresisPolicy
+from upf_digital_twin.evaluation.rollout  import run_rollout, precompute_twin_for_rollouts
+from upf_digital_twin.evaluation.metrics  import compute_metrics
 
 
 def main() -> None:

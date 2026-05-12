@@ -7,13 +7,18 @@ name = "upf-digital-twin"
 version = "0.1.0"
 requires-python = ">=3.10"
 dependencies = [
-  "numpy", "pandas", "pyyaml", "scikit-learn", "torch", "pyarrow",
-  "boto3",          # only if NDT reads S3 directly
-  "s3fs",           # optional, if you use pandas/pyarrow with s3://
+  "numpy",
+  "pandas",
+  "pyyaml",
+  "scikit-learn",
+  "torch",
+  "pyarrow",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
+s3  = ["boto3", "s3fs"]
 
 [tool.setuptools.packages.find]
-where = ["src"]    # if your code lives in src/upf_digital_twin/, otherwise drop this section
+where   = ["src"]
+include = ["upf_digital_twin*"]

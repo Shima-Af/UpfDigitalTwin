@@ -17,9 +17,9 @@ from dataclasses import replace
 import numpy as np
 import pandas as pd
 
-from src.policies.base import Controller
-from src.twin.digital_twin import DigitalTwin
-from src.twin.upf_profile import UPFResult
+from upf_digital_twin.policies.base import Controller
+from upf_digital_twin.twin.digital_twin import DigitalTwin
+from upf_digital_twin.twin.upf_profile import UPFResult
 
 
 def _is_oracle(policy: Controller) -> bool:

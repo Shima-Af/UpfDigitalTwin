@@ -24,7 +24,9 @@
       "Bash(pkill -f run_threshold_demo)",
       "Bash(python3 -W ignore scripts/run_threshold_demo.py)",
       "Bash(pip install *)",
-      "Bash(python3 -c \"import plotly; print\\('plotly', plotly.__version__\\)\")"
+      "Bash(python3 -c \"import plotly; print\\('plotly', plotly.__version__\\)\")",
+      "Bash(python3 -c \"import yaml, numpy, pandas, torch\")",
+      "Bash(PYTHONPATH=src python3 scripts/smoke_test_artifacts.py)"
     ],
     "additionalDirectories": [
       "/home/ubuntu/.claude/projects/-home-ubuntu-UPF_NDT",

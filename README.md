@@ -14,7 +14,7 @@ A controller-agnostic, measurement-grounded digital twin that answers:
 > Given traffic demand and a candidate UPF configuration/action, what would happen in terms of **power, QoS, packet loss, delay, and safety**?
 
 The controller answers a separate question: *which action should be chosen?*  
-Policies live in `src/policies/` and are kept strictly separate from the twin in `src/twin/`.
+Policies live in `src/upf_digital_twin/policies/` and are kept strictly separate from the twin in `src/upf_digital_twin/twin/`.
 
 ## What this repo is NOT
 
@@ -97,7 +97,7 @@ data/external/
   traffic_forecaster/ Artifacts from UpfTrafficForecaster
   profiling_twin/     Artifacts from UpfProfilingCampaign
 
-src/
+src/upf_digital_twin/
   data/
     traffic_loader.py Load and validate traffic forecaster artifacts
   twin/
@@ -117,3 +117,63 @@ scripts/
   smoke_test_artifacts.py  Verify all files and shapes are correct
   run_threshold_demo.py    Run threshold vs baselines, save results
 ```
+
+---
+
+## Using as a library (e.g. from an RL Gymnasium env)
+
+This repo is `pip install`-able. From another project:
+
+```bash
+pip install -e /path/to/UPF_NDT
+```
+
+Then, in the consumer (the data files are *not* shipped with the package — see the
+data contract below for what to provide):
+
+```python
+from upf_digital_twin import DigitalTwin
+
+scenario_cfg = {
+    "upf": {
+        "qos_budget": {"delay_budget_us": 200.0, "max_loss_pkts_per_interval": 0.0},
+    },
+    "upf_switching": {
+        "accounting": "sub_step",
+        "prewarm": {"enabled": True, "standby_power_watts": 0.05},
+    },
+    "traffic": {"time_step_minutes": 15},
+}
+
+twin = DigitalTwin.from_data_dir(
+    data_dir="/path/to/your/data/external",  # see data contract below
+    scenario_cfg=scenario_cfg,
+)
+
+# Stateless: pure physics of one (action, load) point
+result = twin.evaluate_action("USR", actual_load_gbps=0.42)
+
+# Stateful: drive a sequential rollout (used inside a gym env's step())
+session = twin.session(initial_action="DPDK")
+step    = session.step(requested_action="USR", actual_load_gbps=0.42)
+```
+
+### Data contract for external consumers
+
+`DigitalTwin.from_data_dir(data_dir, ...)` expects this layout under `data_dir`:
+
+```
+<data_dir>/
+  profiling_twin/
+    models/
+      manifest.json          # surrogate model registry
+      layer1/                # layer-1 surrogate models
+      layer2/                # layer-2 surrogate models
+    switching_costs.yaml     # activation durations (DPDK, USR)
+```
+
+Source these from [UpfProfilingCampaign](https://github.com/Shima-Af/UpfProfilingCampaign).
+Traffic-forecaster artifacts (`predictions_test.npy`, etc.) are only needed if the
+consumer also calls `load_traffic_artifacts` — for a gym env, traffic typically comes
+from the RL repo's own data pipeline, so the `profiling_twin/` subtree is the only
+hard requirement.
