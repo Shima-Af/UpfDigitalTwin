@@ -293,13 +293,15 @@ def make_strip_html(decisions: np.ndarray, t: int, n_total: int) -> str:
 
 def metric_card(label: str, value: str, sub: str = "", color: str = None) -> str:
     color_style = f"color:{color}" if color else ""
-    return f"""
-    <div style="background:rgba(128,128,128,0.08);border-radius:6px;padding:11px 13px;flex:1;min-width:0">
-      <p style="font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:#888780;margin:0 0 3px">{label}</p>
-      <p style="font-size:20px;font-weight:500;margin:0;line-height:1.2;{color_style}">{value}</p>
-      <p style="font-size:10px;color:#888780;margin:2px 0 0">{sub}</p>
-    </div>
-    """
+    # No leading whitespace — Streamlit's markdown parser treats 4-space
+    # indentation as a code block, which would print the raw HTML.
+    return (
+        f'<div style="background:rgba(128,128,128,0.08);border-radius:6px;padding:11px 13px;flex:1;min-width:0">'
+        f'<p style="font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:#888780;margin:0 0 3px">{label}</p>'
+        f'<p style="font-size:20px;font-weight:500;margin:0;line-height:1.2;{color_style}">{value}</p>'
+        f'<p style="font-size:10px;color:#888780;margin:2px 0 0">{sub}</p>'
+        f'</div>'
+    )
 
 
 # ── Sidebar (always visible) ─────────────────────────────────────────────────
