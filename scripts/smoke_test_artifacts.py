@@ -69,7 +69,6 @@ def main() -> int:
     # --- 3. Traffic artifact files ---
     print("\n[ Traffic forecaster artifacts ]")
     import numpy as np
-    import pandas as pd
 
     tf = paths_cfg["traffic_forecaster"]
     selected_k = int(traffic_cfg.get("selected_k", -1))

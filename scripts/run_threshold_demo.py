@@ -55,7 +55,7 @@ def main() -> None:
     spec = derive_thresholds(twin, safety_margin_mbps=safety_margin_mbps,
                              forecast_mae_gbps=band_mae_used)
 
-    print(f"\nDerived thresholds (from surrogate):")
+    print("\nDerived thresholds (from surrogate):")
     print(f"  Energy break-even:  {spec.energy_breakeven_gbps*1000:6.1f} Mbps")
     print(f"  QoS limit:          {spec.qos_limit_gbps*1000:6.1f} Mbps")
     print(f"  Decision threshold: {spec.decision_gbps*1000:6.1f} Mbps  ({spec.derived_from})")

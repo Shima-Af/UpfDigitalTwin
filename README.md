@@ -85,8 +85,9 @@ real files (and verify they are all present) with:
 ```bash
 python scripts/fetch_data.py        # pulls via DVC if a remote is populated
 ```
-> Note: scikit-learn is pinned to `1.8.x` on purpose — the shipped surrogate
-> `.pkl` models do not unpickle under 1.9 (removed internal `_loss` module).
+> Note: scikit-learn is pinned to `1.7.x` on purpose — the shipped surrogate
+> `.pkl` models were trained on 1.7.0 and do not unpickle under 1.9 (removed
+> internal `_loss` module).
 
 **2. Smoke test** — verify all artifacts and configs are present:
 ```bash

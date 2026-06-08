@@ -10,9 +10,11 @@ dependencies = [
   "numpy",
   "pandas",
   "pyyaml",
-  # Pinned: the shipped surrogate .pkl artifacts are coupled to scikit-learn's
-  # pickle format. 1.8.x loads them; 1.9 removed an internal (_loss) and fails.
-  "scikit-learn>=1.8,<1.9",
+  # Pinned to the surrogate models' training minor (1.7.x): the shipped .pkl
+  # artifacts are coupled to scikit-learn's pickle format. 1.9 removed an
+  # internal (_loss) and fails to unpickle them; 1.7.x matches how they were
+  # saved, avoiding cross-version skew.
+  "scikit-learn>=1.7,<1.8",
   "joblib",
   "pyarrow",
 ]
@@ -25,3 +27,22 @@ s3  = ["boto3", "s3fs"]
 [tool.setuptools.packages.find]
 where   = ["src"]
 include = ["upf_digital_twin*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+# Benign chatter from loading externally-trained surrogate models (integration
+# tests only): patch-level version skew and missing feature names on bare arrays.
+filterwarnings = [
+  "ignore::sklearn.exceptions.InconsistentVersionWarning",
+  "ignore:X does not have valid feature names:UserWarning",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["notebooks", "app"]
+
+[tool.ruff.lint.per-file-ignores]
+# Scripts intentionally compute PROJECT_ROOT before importing the package.
+"scripts/*" = ["E402"]

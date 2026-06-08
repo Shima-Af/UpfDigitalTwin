@@ -2,10 +2,12 @@
 #
 # Source of truth for version *ranges* is pyproject.toml. This file pins the
 # exact resolved set that is known to work end-to-end (smoke test + demo +
-# dashboard) so installs are reproducible.
+# dashboard + tests) so installs are reproducible.
 #
-# NOTE: scikit-learn is held at 1.8.x on purpose — the shipped surrogate .pkl
-# artifacts do not unpickle under 1.9 (removed internal `_loss` module).
+# NOTE: scikit-learn is held at 1.7.x on purpose — the shipped surrogate .pkl
+# artifacts were trained/pickled with 1.7.0. 1.9 removed an internal (_loss)
+# module and fails to unpickle them; staying on the training minor avoids
+# cross-version skew.
 #
 # Reproduce a clean environment:
 #   python3 -m venv .venv
@@ -55,7 +57,7 @@ referencing==0.37.0
 requests==2.34.2
 rpds-py==2026.5.1
 ruff==0.15.16
-scikit-learn==1.8.0
+scikit-learn==1.7.2
 scipy==1.17.1
 six==1.17.0
 smmap==5.0.3
