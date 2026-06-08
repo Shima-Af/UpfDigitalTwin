@@ -72,12 +72,28 @@ unsafe USR rate, USR/DPDK usage ratio, decision flip rate, energy regret vs orac
 
 ## How to run
 
-**Smoke test** — verify all artifacts and configs are present:
+**0. Set up the environment** (reproducible, pinned via `requirements.lock`):
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.lock
+.venv/bin/pip install -e ".[dev,dashboard]" --no-deps
+```
+
+**1. Get the data** — the artifacts are tracked with DVC, not committed to git.
+On a fresh clone the working tree has only the `*.dvc` pointers; materialise the
+real files (and verify they are all present) with:
+```bash
+python scripts/fetch_data.py        # pulls via DVC if a remote is populated
+```
+> Note: scikit-learn is pinned to `1.8.x` on purpose — the shipped surrogate
+> `.pkl` models do not unpickle under 1.9 (removed internal `_loss` module).
+
+**2. Smoke test** — verify all artifacts and configs are present:
 ```bash
 python scripts/smoke_test_artifacts.py
 ```
 
-**Threshold demo** — run all four policies and print comparison table:
+**3. Threshold demo** — run all policies and print the comparison table:
 ```bash
 python scripts/run_threshold_demo.py
 ```

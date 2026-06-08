@@ -1,0 +1,6 @@
+outs:
+- md5: 490f7b281cf670b5ae1d7843e2b1720c.dir
+  size: 661777
+  nfiles: 7
+  hash: md5
+  path: traffic_forecaster

@@ -1,17 +1,18 @@
 .venv/
 __pycache__/
 *.pyc
+*.egg-info/
 .ipynb_checkpoints/
 
 .env
 .env.*
 
-# Ignore data contents, but allow DVC pointer files
-data/**
-!data/
-!data/**/*.dvc
-!data/**/.gitkeep
-
+# Data is tracked by DVC (see README data contract + configs/paths.yaml).
+# `dvc add` writes nested data/**/.gitignore files that exclude the actual file
+# contents while keeping the small *.dvc pointer files tracked in git. Retrieve
+# the data on a fresh clone with:  python scripts/fetch_data.py   (or: dvc pull).
+# The *.pkl / *.npy / *.parquet rules below are a safety net so raw data
+# binaries are never committed directly.
 
 models/
 results/

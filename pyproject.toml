@@ -10,13 +10,16 @@ dependencies = [
   "numpy",
   "pandas",
   "pyyaml",
-  "scikit-learn",
-  "torch",
+  # Pinned: the shipped surrogate .pkl artifacts are coupled to scikit-learn's
+  # pickle format. 1.8.x loads them; 1.9 removed an internal (_loss) and fails.
+  "scikit-learn>=1.8,<1.9",
+  "joblib",
   "pyarrow",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]
+dashboard = ["streamlit", "plotly"]
 s3  = ["boto3", "s3fs"]
 
 [tool.setuptools.packages.find]
