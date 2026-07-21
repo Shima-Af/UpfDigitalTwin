@@ -18,6 +18,7 @@ This guarantees a single noisy forecast cannot trigger a flip.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 
 import numpy as np
@@ -114,6 +115,22 @@ def derive_thresholds(
     band = 2 * forecast_mae_gbps if forecast_mae_gbps is not None else 0.0
     t_up   = decision
     t_down = max(0.0, decision - band)
+
+    # A band wider than the decision threshold clamps t_down to 0, so the
+    # controller can never switch back to USR and silently degenerates into
+    # always-DPDK — it still runs and still reports metrics, so this is easy
+    # to miss. The band scales with the forecast MAE, which in turn scales
+    # with alpha, so this is reachable from a plain config change.
+    if band >= decision > 0.0:
+        warnings.warn(
+            f"Hysteresis band ({band*1000:.1f} Mbps) >= decision threshold "
+            f"({decision*1000:.1f} Mbps): t_down clamped to 0, so the "
+            f"controller can never return to USR and will behave as "
+            f"always-DPDK. Set threshold.hysteresis_band to a fixed value "
+            f"below the decision threshold instead of 'auto'.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
 
     derived_from = (
         f"min(breakeven={breakeven*1000:.1f} Mbps, qos={qos_limit*1000:.1f} Mbps) "

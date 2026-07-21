@@ -17,10 +17,10 @@ traffic:
   calibration:
     mode: global_alpha      # only supported mode for now
     # DECLARED ASSUMPTION, not a recovered scaler: NetMob is dimensionless by
-    # construction, so no physical Gbps scaler exists to look up. At 0.12 the
-    # fleet peaks at 0.70 Gbps and 77.8% of steps sit below the decision
-    # threshold. See reconciliation notice at the top of this file.
-    alpha_gbps_per_norm: 0.12  # 1 normalised unit = 0.12 Gbps
+    # construction, so no physical Gbps scaler exists to look up. alpha=1.0
+    # interprets one summed-dl_norm unit as 1 Gbps of offered UPF load, placing
+    # the K=10 clusters at 0.11-1.66 Gbps mean with 5.8 Gbps peaks.
+    alpha_gbps_per_norm: 1.0  # 1 normalised unit = 1 Gbps
 
   time_step_minutes: 15     # NetMob resolution
 
@@ -28,15 +28,20 @@ traffic:
 upf:
   qos_budget:
     delay_budget_us:           200.0  # downlink delay must be ≤ this
-    # NOTE: this feeds threshold derivation as well as is_safe. Raising it to
-    # 5.0 moves the QoS limit 81 -> 149 Mbps and the decision threshold
-    # 71 -> 81 Mbps, flipping the binding constraint from QoS to energy.
-    max_loss_pkts_per_interval:  0.0  # zero tolerance for predicted packet loss
+    # NOTE: feeds threshold derivation as well as is_safe. At 5.0 the QoS limit
+    # is 149 Mbps and the decision threshold 81 Mbps (energy-limited, i.e. the
+    # break-even at 91 Mbps binds, not QoS). At 0.0 it was 81/71 (QoS-limited).
+    max_loss_pkts_per_interval:  5.0  # tolerated predicted packet loss
 
 # --- Threshold derivation (replaces hardcoded thresholds) ---
 threshold:
   safety_margin_mbps: 10.0
-  hysteresis_band: auto       # "auto" → 2 × forecast MAE, or float in Mbps, or 0
+  # "auto" → 2 × forecast MAE, or float in Mbps, or 0.
+  # Fixed at 20 Mbps rather than "auto": the auto band scales with alpha via the
+  # forecast MAE, and at alpha=1.0 it reaches 221 Mbps — wider than the 81 Mbps
+  # decision threshold, which clamps t_down to 0 and degenerates the controller
+  # into always-DPDK. 20 Mbps matches the downstream consumer's tuned baseline.
+  hysteresis_band: 20.0
   cooldown_steps: 1
 
 # --- Switching cost model ---
@@ -55,8 +60,8 @@ upf_switching:
   # Prewarm: keep DPDK in standby (always-on) so we pay continuous standby cost
   # but switching is instant from the model's perspective.  When false, DPDK
   # cold-starts and the activation cost above applies.
-  # NOTE: disabling prewarm raises reported savings by ~5-6 pp (static USR
-  # 37.3 -> 43.4%, hysteresis 49.2 -> 53.8%). Safety metrics are unaffected.
+  # Disabled to match the downstream consumer: DPDK cold-starts and the
+  # activation cost above applies. No continuous standby draw is charged.
   prewarm:
-    enabled: true
-    standby_power_watts: 0.05
+    enabled: false
+    standby_power_watts: 0.0

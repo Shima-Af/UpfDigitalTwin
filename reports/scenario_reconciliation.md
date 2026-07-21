@@ -1,6 +1,27 @@
 # Scenario Reconciliation — Digital Twin vs. RL Controller
 
-**Status: OPEN — requires author decision. No config values were changed by this note.**
+**Status: RESOLVED (2026-07-21) — author chose to unify on the controller's values.**
+`configs/scenario.yaml` now ships alpha=1.0, max_loss=5.0, prewarm=off, plus a fixed
+20 Mbps hysteresis band (fourth divergence, found during reconciliation — see §4).
+
+> ## THE CHAPTER IS NOW STALE
+>
+> `reports/chapter_digital_twin.tex` and every figure in `reports/figures/` were
+> computed under the OLD values and no longer match the shipped config. The headline
+> result changes by roughly an order of magnitude:
+>
+> | | old (chapter) | reconciled |
+> |---|---|---|
+> | Hysteresis energy saving | **49.2 %** | **4.8 %** |
+> | Static USR energy saving | **37.3 %** | **−154.5 %** (costs more than DPDK) |
+> | Oracle ceiling | 51.0 % | **6.7 %** |
+> | Steps below decision threshold | 77.8 % | 13.7 % |
+>
+> Do not cite the chapter's numbers until it is re-run. The analysis below is
+> retained as the record of how this was decided.
+
+The sections below were written before the decision and describe the pre-reconciliation
+state.
 
 Date: 2026-07-21
 Twin config: `configs/scenario.yaml`
@@ -183,3 +204,118 @@ python reports/make_figures.py           # chapter figures
 ```
 
 Vary the three fields in `configs/scenario.yaml` to reproduce each comparison column.
+
+---
+
+# Addendum (2026-07-21) — decision, baseline audit, and reconciled numbers
+
+## Decision
+
+Author elected to unify on the controller's values: **alpha = 1.0, max_loss = 5.0,
+prewarm = off**. Applied to `configs/scenario.yaml`.
+
+## 4. `threshold.hysteresis_band` — auto (twin) vs fixed 20 Mbps (controller)
+
+**A fourth divergence, not in the original brief. Found by auditing the controller's
+baselines. This one silently breaks the hysteresis controller.**
+
+The twin config used `hysteresis_band: auto` (= 2 x forecast MAE). The MAE is converted
+to Gbps through alpha, so **the band scales with alpha**:
+
+| alpha | forecast MAE | auto band | decision threshold | t_down |
+|---|---|---|---|---|
+| 0.12 | 13.3 Mbps | 26.6 Mbps | 71 Mbps | 44.4 Mbps (fine) |
+| 1.0 | 110.7 Mbps | **221.3 Mbps** | 81 Mbps | **0.0 Mbps (broken)** |
+
+At alpha=1.0 the band is wider than the decision threshold, so `t_down` clamps to 0, the
+controller can never switch back to USR, and hysteresis **degenerates into always-DPDK** —
+while still running and still reporting metrics. It is not obviously broken from the output.
+
+The controller repo had already hit this independently. Its dashboard documents
+`hysteresis-auto` as "paper-faithful auto band (2 x forecast MAE); **tends to degenerate
+to always-DPDK when the forecaster is noisy**", and its headline classical baseline is
+`hysteresis-tuned` with a manually-set **20 Mbps** band, labelled "best classical
+controller".
+
+**Resolution.** Twin config set to `hysteresis_band: 20.0` to match. Additionally,
+`derive_thresholds` now emits a `RuntimeWarning` when `band >= decision`, so this failure
+mode cannot recur silently in either repo.
+
+## Baseline audit — do the two repos' baselines match?
+
+**Algorithmically yes; the divergence was entirely in configuration.**
+`UpfRLControllers/src/baselines/{threshold_derivation,hysteresis}.py` are acknowledged
+verbatim ports of this repo's implementations ("Ports `derive_thresholds` from
+UpfDigitalTwin"). Diffing them shows only cosmetic drift:
+
+| | Twin | Controller | Behavioural? |
+|---|---|---|---|
+| Switching rule, cooldown, initial-action logic | identical | identical | no |
+| `min(breakeven, qos) - margin` | identical | identical | no |
+| band = 2 x MAE | identical | identical | no |
+| Action encoding | `"DPDK"` / `"USR"` | `0` / `1` | no |
+| Base class | `Controller` ABC | plain class | no |
+| `load_forecast_mae_gbps` input | parsed dict | `Path` | no |
+| `MultiAgentHysteresis` (K instances) | absent | present | controller-only |
+| **Hysteresis band in use** | **auto (2 x MAE)** | **fixed 20 Mbps** | **YES** |
+
+So the earlier degenerate result was not caused by mismatched baseline code. It was the
+band configuration, and it would have hit the controller repo identically had it used
+`auto`.
+
+## Reconciled numbers (10,090 cluster-steps, alpha=1.0, max_loss=5.0, prewarm=off)
+
+Derived operating points: break-even 91.0 Mbps, QoS limit 149.0 Mbps,
+**decision threshold 81.0 Mbps (energy-limited)**.
+
+| Policy | Energy (Wh) | Avg power (W) | Saving (%) | Unsafe USR (%) | USR use (%) | Flip rate |
+|---|---|---|---|---|---|---|
+| Static DPDK | 2070.72 | 0.8209 | 0.0 | 0.00 | 0.0 | 0.000 |
+| Static USR | 5269.81 | 2.0891 | **−154.5** | 70.26 | 100.0 | 0.000 |
+| Threshold | 1969.57 | 0.7803 | 4.9 | 4.16 | 14.0 | 0.042 |
+| Hysteresis (auto band) | 2070.72 | 0.8209 | **0.0 — degenerate** | 0.00 | 0.0 | 0.000 |
+| **Hysteresis (band=20 Mbps)** | 1970.99 | 0.7811 | **4.8** | 3.02 | 11.5 | 0.021 |
+| Oracle | 1931.03 | 0.7647 | 6.7 | 0.00 | 13.7 | 0.072 |
+
+## Open concern for the author and supervisor
+
+At the reconciled settings the **oracle ceiling is 6.7 %** — that is the best any
+controller with perfect foresight can achieve on this hardware and traffic. The
+best realisable classical controller gets 4.8 %, i.e. it already captures ~72 % of the
+available headroom.
+
+This is worth raising deliberately, because it bears on both chapters:
+
+- The twin chapter's energy-saving contribution shrinks from ~49 % to ~4.8 %.
+- Static USR is no longer an energy-greedy alternative; it *costs 2.5x DPDK* and is
+  unsafe 70 % of the time. The framing "USR saves energy but risks QoS" no longer holds.
+- For the controller chapter: if the classical baseline is within 1.9 pp of oracle,
+  the room for a learned policy to demonstrate value is thin. It is worth checking what
+  the trained MAPPO/PPO agents actually achieve against these baselines before
+  committing to alpha=1.0 in print.
+
+The underlying cause is physical: the profiled UPF's USR path saturates around 81-149
+Mbps, while alpha=1.0 places traffic at 0.11-1.66 Gbps mean with 5.8 Gbps peaks — one to
+two orders of magnitude above the knee. In that regime DPDK is almost always correct and
+there is little switching decision left to make. alpha=0.12 was the regime in which the
+measured hardware had a genuine decision; alpha=1.0 is the regime the controller repo
+declared. Both are declarations, and the choice determines whether the thesis has an
+interesting control problem.
+
+## Reducing the duplication
+
+The controller repo currently maintains ~200 lines of ported baseline code that must stay
+in lockstep with this repo by hand. This reconciliation is exactly the failure that
+duplication produces. Recommended direction (one-way dependency, twin stays consumer-
+agnostic):
+
+1. This repo exports the canonical baselines as public API — `derive_thresholds` plus the
+   `Static*`, `Threshold`, `Hysteresis`, `Oracle` policies.
+2. The controller deletes `src/baselines/` and imports from `upf_digital_twin`, keeping
+   only what is genuinely its own: `MultiAgentHysteresis` and the int-action adapter.
+3. Two small accommodations here to make that painless, neither controller-specific:
+   accept either a parsed dict or a path in `load_forecast_mae_gbps`, and expose a
+   neutral action-encoding helper so int-valued consumers need not re-implement policies.
+4. Scenario fields that both repos read (alpha, QoS budget, switching, band) should live
+   in one file shipped by this package, with the controller overlaying only RL-specific
+   blocks — so a divergence like this one becomes impossible rather than merely detectable.
