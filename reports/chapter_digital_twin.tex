@@ -261,12 +261,27 @@ global calibration constant $\alpha$ converts this to a physical offered load
 in Gbps:
 \begin{equation}
   \lambda_{\mathrm{Gbps}} = \alpha \cdot \hat d, \qquad
-  \alpha = 0.12~\text{Gbps per normalised unit}.
+  \alpha = 1.0~\text{Gbps per normalised unit}.
   \label{eq:dt_alpha}
 \end{equation}
 The value of $\alpha$ is a scenario parameter; it sets the physical scale at
 which the (otherwise dimensionless) forecast is interpreted, and hence where a
 given normalised load falls relative to the \usr{} saturation knee.
+
+It must be stated plainly that $\alpha$ is a \emph{declared modelling
+assumption, not a recovered calibration}. The NetMob traces are dimensionless
+by construction, for privacy reasons, and the forecaster sums per-base-station
+normalised demand across each cluster; there is consequently no physical
+scaler that could be looked up or fitted. Setting $\alpha = 1$ interprets one
+unit of summed normalised demand as 1\,Gbps of offered \upf{} load, which
+places the $K = 10$ clusters at mean loads of $0.11$--$1.66$\,Gbps with peaks
+to $5.8$\,Gbps---a realistic per-site MEC \upf{} operating range. The same
+value is used by the controller work of Chapter~\ref{chap:controllers}, so
+that both chapters describe one physical regime. Section~\ref{sec:dt_results}
+returns to the consequences of this choice, which are substantial: because the
+profiled \usr{} data path saturates one to two orders of magnitude below these
+loads, $\alpha$ largely determines how much room for energy-aware switching
+exists at all.
 
 \subsection{Lite input adapter}
 
@@ -301,9 +316,14 @@ two distinct concerns:
       \bigl(\text{delay} \le D_{\max}\bigr),
       \label{eq:dt_is_safe}
     \end{equation}
-    with the default budget $D_{\max} = 200~\mu$s and zero-tolerance
-    $L_{\max} = 0$ packets per interval. \dpdk{} is safe across the entire
-    measured load range; \usr{} is safe only below its knee.
+    with the default budget $D_{\max} = 200~\mu$s and loss tolerance
+    $L_{\max} = 5$ packets per interval. \dpdk{} is safe across the entire
+    measured load range; \usr{} is safe only below its knee. The tolerance is
+    deliberately non-zero: it is shared with the controller work of
+    Chapter~\ref{chap:controllers}, where it additionally serves as the
+    normalisation base of a graded QoS score. Its value is not cosmetic---as
+    Section~\ref{sec:dt_thresholds} shows, it moves the derived QoS limit and
+    thereby determines which constraint binds the decision threshold.
   \item[\code{is\_efficient} (locally cheaper).] True iff this action's
     predicted power is lower than the \emph{other} action's predicted power at
     the same load. It is a relative, per-load comparison---not an absolute
@@ -391,7 +411,11 @@ step is accounted for. Three policies are supported
 
 An optional \emph{prewarm} mode keeps \dpdk{} in standby so that switching to
 it is effectively instantaneous, at the cost of a continuous standby power
-(default 0.05\,W) while it is not the serving \upf{}.
+while it is not the serving \upf{}. Prewarm is \emph{disabled} in the scenario
+reported here, so \dpdk{} cold-starts and the activation cost above applies in
+full; no standby draw is charged. This matches the deployment assumption of
+Chapter~\ref{chap:controllers} and yields the more conservative claim, in that
+no energy is attributed to a standby the deployment may not actually pay.
 
 \begin{figure}[htbp]
   \centering
@@ -436,7 +460,7 @@ stateless twin over load (Figure~\ref{fig:dt_threshold}):
 
 \noindent
 For the scenario studied here the sweep yields
-$\lambda_{\mathrm{be}} = 91$\,Mbps and $\lambda_{\mathrm{qos}} = 81$\,Mbps. The
+$\lambda_{\mathrm{be}} = 91$\,Mbps and $\lambda_{\mathrm{qos}} = 149$\,Mbps. The
 decision threshold a controller should use is the more conservative of the
 two, minus a safety margin:
 \begin{equation}
@@ -445,7 +469,15 @@ two, minus a safety margin:
   \qquad m = 10~\text{Mbps},
   \label{eq:dt_decision}
 \end{equation}
-giving $\lambda_{\mathrm{dec}} = 71$\,Mbps here (QoS-limited).
+giving $\lambda_{\mathrm{dec}} = 81$\,Mbps here (energy-limited: the
+break-even binds before the QoS limit). It is worth noting that this ordering
+depends on the loss tolerance $L_{\max}$ of
+Equation~\eqref{eq:dt_is_safe}. Under zero tolerance the QoS limit falls to
+81\,Mbps and binds first, giving $\lambda_{\mathrm{dec}} = 71$\,Mbps and a
+QoS-limited regime. The derivation machinery is unchanged either way---which
+is the point of deriving rather than hardcoding---but the reported operating
+point is sensitive to a budget that is a policy choice rather than a measured
+quantity.
 
 \subsection{Anti-flapping from forecast uncertainty}
 
@@ -459,12 +491,40 @@ forecast cannot trigger a switch:
   \lambda_{\downarrow} = \lambda_{\mathrm{dec}} - \text{band}.
   \label{eq:dt_band}
 \end{equation}
-With the forecaster's mean absolute error of $\approx 13.3$\,Mbps for the
-operating cluster count, the band is $\approx 26.6$\,Mbps, giving an
-upper switch point $\lambda_{\uparrow} = 71$\,Mbps and a lower one
-$\lambda_{\downarrow} = 44$\,Mbps. The controller switches \usr{}$\to$\dpdk{}
-only when the predicted load rises above $\lambda_{\uparrow}$, and back only
-when it falls below $\lambda_{\downarrow}$.
+The controller switches \usr{}$\to$\dpdk{} only when the predicted load rises
+above $\lambda_{\uparrow}$, and back only when it falls below
+$\lambda_{\downarrow}$.
+
+This error-derived rule, however, has a failure mode that the present scenario
+exposes and that is worth reporting explicitly. The forecaster's error is
+reported in normalised units, so the band inherits the scale factor $\alpha$
+of Equation~\eqref{eq:dt_alpha}. At $\alpha = 1$ the mean absolute error for
+the operating cluster count is $\approx 110.7$\,Mbps, so
+Equation~\eqref{eq:dt_band} would prescribe a band of $\approx 221$\,Mbps---
+substantially \emph{wider} than the decision threshold itself. The lower
+switch point is then clamped at $\lambda_{\downarrow} = 0$, the controller can
+never return to \usr{} once it has left, and hysteresis silently degenerates
+into a static-\dpdk{} policy. It is a benign-looking degeneration: the
+controller still runs, still reports metrics, and simply never switches.
+
+Two conclusions follow. First, an anti-flapping band derived from forecast
+error is only meaningful when that error is small relative to the operating
+point; when the forecaster is noisy at the scale of the decision threshold,
+the rule as stated is unusable and must be capped rather than applied
+literally. The twin therefore emits an explicit warning whenever the derived
+band meets or exceeds the decision threshold. Second, for the results reported
+here the band is instead fixed at
+\begin{equation}
+  \text{band} = 20~\text{Mbps},\qquad
+  \lambda_{\uparrow} = 81~\text{Mbps},\qquad
+  \lambda_{\downarrow} = 61~\text{Mbps},
+  \label{eq:dt_band_used}
+\end{equation}
+which is narrow enough to preserve genuine two-threshold behaviour and matches
+the band used for the classical baselines of
+Chapter~\ref{chap:controllers}. Equation~\eqref{eq:dt_band} is retained as the
+principled default for regimes in which the forecast error is small compared
+with $\lambda_{\mathrm{dec}}$.
 
 \begin{figure}[htbp]
   \centering
@@ -530,23 +590,41 @@ Learned controllers, an informed oracle upper bound, and the single-threshold
 policy are evaluated in Chapter~\ref{chap:controllers}; they are deliberately
 omitted here.
 
-\subsection{Why energy-aware switching pays}
+\subsection{How much room is there for energy-aware switching?}
 
 The case for switching at all rests on the load distribution.
 Figure~\ref{fig:dt_load_dist} shows that the offered load is heavily
-right-skewed: roughly 78\,\% of all cluster-steps fall below the
-decision threshold, i.e.\ in the regime where \usr{} is both safe and cheaper
-than \dpdk{}. A controller that exploits this---running \usr{} at low load and
-\dpdk{} only when load rises---stands to recover most of \dpdk{}'s fixed power
-cost without violating QoS.
+right-skewed, but that under the calibration of
+Equation~\eqref{eq:dt_alpha} only about 14\,\% of cluster-steps fall below the
+decision threshold---that is, only on roughly one step in seven is \usr{} both
+safe and cheaper than \dpdk{}. The remaining steps sit above the \usr{}
+saturation knee, where \dpdk{} is the only viable action.
+
+This bounds the achievable benefit tightly, and it is more honest to establish
+that bound before presenting any controller. An informed oracle, given the
+\emph{actual} load at each step and choosing the cheaper safe action, recovers
+6.7\,\% of static \dpdk{}'s energy. No causal controller operating on this
+traffic, this hardware, and this calibration can do better. The energy-aware
+switching problem, in this regime, is a narrow one: the value of a controller
+lies in capturing as much of that 6.7\,\% as possible without incurring QoS
+violations, rather than in a large absolute saving.
+
+The reason is physical rather than algorithmic. The profiled \usr{} data path
+saturates at roughly $91$--$149$\,Mbps (Section~\ref{sec:dt_thresholds}),
+whereas $\alpha = 1$ places cluster loads at $0.11$--$1.66$\,Gbps mean with
+peaks to $5.8$\,Gbps---one to two orders of magnitude above the knee. A
+software \upf{} of this capacity is simply undersized relative to the offered
+traffic, and the twin's role here is precisely to make that mismatch
+quantitative rather than to disguise it.
 
 \begin{figure}[htbp]
   \centering
   \includegraphics[width=\linewidth]{\figpath{fig_dt_load_distribution.png}}
   \caption{Distribution of calibrated offered load across all clusters and
-    time windows. About 78\,\% of cluster-steps lie below the derived decision
-    threshold (dashed), i.e.\ in the regime where \usr{} is the safe and
-    cheaper action.}
+    time windows. Only about 14\,\% of cluster-steps lie below the derived
+    decision threshold (dashed), i.e.\ in the regime where \usr{} is the safe
+    and cheaper action; the long right tail extends well beyond the \usr{}
+    saturation knee, where \dpdk{} is the only viable action.}
   \label{fig:dt_load_dist}
 \end{figure}
 
@@ -556,9 +634,13 @@ Figure~\ref{fig:dt_rollout} shows a representative window of one cluster's
 rollout. The controller holds \usr{} while the predicted load stays within the
 hysteresis band, switches to \dpdk{} when load rises above $\lambda_{\uparrow}$,
 and returns to \usr{} only after load falls below $\lambda_{\downarrow}$; the
-power trace (lower panel) accordingly sits near \dpdk{}'s 0.82\,W floor during
-high-load excursions and drops into \usr{}'s low-power regime otherwise. The
-band visibly prevents single-sample flips around the threshold.
+power trace (lower panel) accordingly sits near \dpdk{}'s 0.82\,W plateau
+during high-load excursions and drops into \usr{}'s low-power regime
+otherwise. The band visibly prevents single-sample flips around the threshold:
+the load crosses $\lambda_{\uparrow}$ repeatedly without provoking a switch
+until it also clears the band. Because prewarm is disabled, the cold-start
+activation cost is now visible directly in the trace as short spikes above the
+\dpdk{} plateau at switch instants.
 
 \begin{figure}[htbp]
   \centering
@@ -574,21 +656,41 @@ band visibly prevents single-sample flips around the threshold.
 \subsection{Aggregate behaviour}
 
 Table~\ref{tab:dt_metrics} and Figure~\ref{fig:dt_comparison} summarise the
-three controllers over all $10{,}090$ steps. Static \usr{} saves
-37\,\% of energy versus static \dpdk{} but is \emph{unsafe on
-18.8\,\% of its steps}---the direct consequence of ignoring the saturation
-knee. The hysteresis rule, by respecting the surrogate-derived QoS limit,
-saves \emph{more} energy (49\,\%) while cutting the unsafe rate to
-1.7\,\%, by ceding to \dpdk{} exactly on the minority of high-load steps where
-\usr{} would fail. This is the central demonstration that the twin behaves as
-intended: it exposes the energy--safety trade-off quantitatively, and a
-controller that consumes its safety signal dominates one that does not.
+controllers over all $10{,}090$ steps. The headline observation is that static
+\usr{} is not merely unsafe here but actively \emph{more expensive}: it
+consumes $2.5\times$ static \dpdk{}'s energy ($-154.5$\,\% ``saving'') while
+violating QoS on 70.3\,\% of its steps. This is the direct consequence of
+running a saturated data path---past its knee, \usr{} loses throughput,
+inflates delay, and burns more CPU power than the accelerated path it was
+meant to undercut. Any intuition that the software \upf{} is the cheap option
+holds only below the knee.
+
+The hysteresis rule recovers 4.8\,\% of static \dpdk{}'s energy while keeping
+the unsafe rate at 3.0\,\%, by serving \usr{} on the 11.5\,\% of steps where
+it is genuinely both safe and cheaper and ceding to \dpdk{} elsewhere. Against
+the 6.7\,\% oracle bound established above, it captures roughly 72\,\% of the
+attainable headroom using only a forecast and two derived thresholds. The
+stateless threshold policy achieves a marginally higher saving (4.9\,\%) at a
+noticeably worse unsafe rate (4.2\,\%) and twice the switching churn, which is
+the trade the hysteresis band exists to make.
+
+The absolute saving is modest, and it would be misleading to present it
+otherwise: as established above, the regime admits at most 6.7\,\%. The
+demonstration this chapter offers is therefore not that switching saves a
+great deal of energy on this hardware, but that the twin \emph{quantifies the
+trade-off correctly}---it identifies where the saturation knee lies, prices
+the switching cost, bounds the attainable benefit, and exposes the
+energy--safety frontier that learned controllers will later be trained to
+navigate. A twin that reported a large saving here would be concealing the
+capacity mismatch rather than measuring it.
 
 \begin{table}[htbp]
   \centering
   \caption{Aggregate metrics over $10{,}090$ cluster-steps (non-learning
-    controllers; learned controllers and oracle bound are deferred to
-    Chapter~\ref{chap:controllers}). Energy includes switching spikes.}
+    controllers; learned controllers are deferred to
+    Chapter~\ref{chap:controllers}). Energy includes switching spikes. The
+    informed oracle sees the actual load at each step and is reported as an
+    upper bound, not as a realisable controller.}
   \label{tab:dt_metrics}
   \setlength{\tabcolsep}{6pt}
   \begin{tabular}{lrrrrr}
@@ -596,9 +698,12 @@ controller that consumes its safety signal dominates one that does not.
     \textbf{Controller} & \textbf{Energy (Wh)} & \textbf{Avg power (W)}
       & \textbf{Saving (\%)} & \textbf{Unsafe USR (\%)} & \textbf{USR use (\%)} \\
     \midrule
-    Static \dpdk{} & $2067.1$ & $0.819$ & $0.0$  & $0.0$  & $0.0$  \\
-    Static \usr{}  & $1296.1$ & $0.464$ & $37.3$ & $18.8$ & $100.0$ \\
-    Hysteresis     & $1049.9$ & $0.378$ & $49.2$ & $1.7$  & $75.6$ \\
+    Static \dpdk{} & $2070.7$ & $0.821$ & $0.0$    & $0.0$  & $0.0$   \\
+    Static \usr{}  & $5269.8$ & $2.089$ & $-154.5$ & $70.3$ & $100.0$ \\
+    Threshold      & $1969.6$ & $0.780$ & $4.9$    & $4.2$  & $14.0$  \\
+    Hysteresis     & $1971.0$ & $0.781$ & $4.8$    & $3.0$  & $11.5$  \\
+    \midrule
+    Oracle (bound) & $1931.0$ & $0.765$ & $6.7$    & $0.0$  & $13.7$  \\
     \bottomrule
   \end{tabular}
 \end{table}
@@ -608,9 +713,10 @@ controller that consumes its safety signal dominates one that does not.
   \includegraphics[width=\linewidth]{\figpath{fig_dt_policy_comparison.png}}
   \caption{Aggregate comparison of the non-learning controllers.
     (a)~Total energy (with saving vs.\ static \dpdk{} annotated);
-    (b)~unsafe \usr{} rate; (c)~\usr{} usage. Hysteresis saves the most energy
-    \emph{and} is nearly always safe, whereas static \usr{} is cheap but
-    frequently unsafe.}
+    (b)~unsafe \usr{} rate; (c)~\usr{} usage. Static \usr{} is both the most
+    expensive and by far the least safe option in this regime, since it runs a
+    saturated data path; hysteresis achieves a modest saving while keeping the
+    unsafe rate low.}
   \label{fig:dt_comparison}
 \end{figure}
 
@@ -640,9 +746,18 @@ principal points are:
     derived from the forecaster's own error, keeping operating points
     consistent with the measured physics.
   \item \textbf{Demonstration.} Driven by a transparent hysteresis controller,
-    the twin recovers 49\,\% of \dpdk{}'s energy while remaining safe on
-    98.3\,\% of \usr{} steps, quantitatively exposing the energy--safety
-    trade-off that learned controllers will later be trained to navigate.
+    the twin recovers 4.8\,\% of \dpdk{}'s energy---roughly 72\,\% of the
+    6.7\,\% available to an informed oracle---while remaining safe on 97.0\,\%
+    of \usr{} steps, quantitatively exposing the energy--safety trade-off that
+    learned controllers will later be trained to navigate.
+  \item \textbf{Bounded headroom.} Under the declared calibration
+    $\alpha = 1$, the profiled \usr{} path saturates one to two orders of
+    magnitude below the offered cluster loads, so only $\approx 14$\,\% of
+    steps admit a \usr{} decision at all and static \usr{} costs $2.5\times$
+    \dpdk{}. Establishing this bound is itself a result: it tells the
+    controller chapter how much value a learned policy can possibly add, and
+    it identifies \upf{} capacity---not control policy---as the dominant
+    lever in this deployment.
 \end{enumerate}
 
 \end{document}

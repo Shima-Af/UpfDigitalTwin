@@ -29,3 +29,11 @@ mlflow.db
 *.parquet
 *.csv
 *.zip
+
+# LaTeX build artifacts (chapter .tex/.pdf are tracked; intermediates are not)
+reports/*.aux
+reports/*.fls
+reports/*.fdb_latexmk
+reports/*.log
+reports/*.out
+reports/*.synctex.gz

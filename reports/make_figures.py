@@ -70,9 +70,23 @@ def main() -> None:
     profile = twin._profile
     artifacts = load_traffic_artifacts(paths_cfg, scenario_cfg, PROJECT_ROOT)
 
-    # Derived operating points (twin physics, not a controller)
-    mae = load_forecast_mae_gbps(artifacts.forecast_eval_summary, alpha, artifacts.selected_k)
-    spec = derive_thresholds(twin, safety_margin_mbps=10.0, forecast_mae_gbps=mae)
+    # Derived operating points (twin physics, not a controller).
+    # Honour the scenario's threshold block so these figures match
+    # run_threshold_demo.py; previously the margin and band were hardcoded here,
+    # which silently ignored `threshold.hysteresis_band`.
+    threshold_cfg = scenario_cfg["threshold"]
+    safety_margin_mbps = float(threshold_cfg["safety_margin_mbps"])
+    band_cfg = threshold_cfg.get("hysteresis_band", "auto")
+    if band_cfg == "auto":
+        band_mae_used = load_forecast_mae_gbps(
+            artifacts.forecast_eval_summary, alpha, artifacts.selected_k
+        )
+    elif isinstance(band_cfg, (int, float)):
+        band_mae_used = (band_cfg / 1000.0) / 2.0  # we pass MAE; band = 2*MAE
+    else:
+        band_mae_used = None
+    spec = derive_thresholds(twin, safety_margin_mbps=safety_margin_mbps,
+                             forecast_mae_gbps=band_mae_used)
     print("Derived: breakeven=%.1f qos=%.1f decision=%.1f t_up=%.1f t_down=%.1f Mbps"
           % (spec.energy_breakeven_gbps * 1e3, spec.qos_limit_gbps * 1e3,
              spec.decision_gbps * 1e3, spec.t_up_gbps * 1e3, spec.t_down_gbps * 1e3))
@@ -155,15 +169,18 @@ def main() -> None:
     # =====================================================================
     actual = artifacts.targets_norm[:, 0, :].ravel() * alpha  # Gbps
     below = float((actual < spec.decision_gbps).mean()) * 100
+    # Range follows the data (it scales with alpha) rather than a fixed 0.5 Gbps,
+    # which would clip the distribution entirely at alpha=1.0.
+    hi_gbps = float(np.percentile(actual, 99.5))
     fig, ax = plt.subplots(figsize=(8, 4.2))
-    ax.hist(actual, bins=80, range=(0, 0.5), color="#888888", alpha=0.8)
+    ax.hist(actual, bins=80, range=(0, hi_gbps), color="#888888", alpha=0.8)
     ax.axvline(spec.decision_gbps, color="k", ls="--", lw=1.4,
                label=f"decision = {spec.decision_gbps*1e3:.0f} Mbps "
                      f"({below:.0f}% of steps below)")
     ax.set_xlabel("Offered load (Gbps)")
     ax.set_ylabel("Count (cluster-steps)")
     ax.set_title("Distribution of offered load across clusters and time")
-    ax.set_xlim(0, 0.5)
+    ax.set_xlim(0, hi_gbps)
     ax.legend(loc="upper right")
     _save(fig, "fig_dt_load_distribution.png")
 
