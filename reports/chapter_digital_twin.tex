@@ -1,0 +1,648 @@
+% ============================================================
+% Thesis Chapter: The UPF Digital Twin and its Construction
+% ============================================================
+% Compile with:  pdflatex chapter_digital_twin.tex  (run twice)
+% Figures live in  reports/figures/  (PNGs produced by make_figures.py).
+% Diagrams marked [DRAW.IO PLACEHOLDER] are to be drawn by hand; the box
+% text is the brief for the drawing.
+% ============================================================
+
+\documentclass[12pt, a4paper]{report}
+
+% -- Packages ------------------------------------------------------------
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{amsmath, amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{xcolor}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage[hidelinks]{hyperref}
+\usepackage{setspace}
+\onehalfspacing
+
+% -- Convenience macros --------------------------------------------------
+\newcommand{\dpdk}{\textsc{sd-core dpdk}}
+\newcommand{\usr}{\textsc{usr-upf}}
+\newcommand{\upf}{\textsc{upf}}
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\figpath}[1]{figures/#1}
+
+% Draw.io placeholder box: a framed brief describing a diagram to be drawn.
+\newcommand{\drawioplaceholder}[1]{%
+  \fbox{\parbox{0.94\linewidth}{\centering\vspace{2pt}
+    \textbf{[\,DRAW.IO PLACEHOLDER\,]}\\[4pt]
+    \footnotesize\raggedright #1\vspace{2pt}}}}
+
+\begin{document}
+% ============================================================
+
+\chapter{The UPF Digital Twin}
+\label{chap:digital_twin}
+
+% -- Section 1: Introduction --------------------------------------------
+\section{Introduction}
+\label{sec:dt_intro}
+
+Chapter~\ref{chap:upf_profiling} established, from controlled laboratory
+measurements, \emph{how} two open-source \upf{} implementations behave under
+load: \dpdk{} draws a near-constant 0.82\,W regardless of traffic, whereas
+\usr{} scales its power proportionally to load but saturates---losing packets
+and inflating delay---above roughly 0.5\,Gbps. Those measurements are the raw
+material; on their own they do not yet constitute a tool a network controller
+can query.
+
+This chapter describes the construction of a \emph{digital twin}: a
+measurement-grounded, controller-agnostic software component that answers a
+single well-posed question,
+
+\begin{quote}
+  \emph{Given an offered traffic load and a candidate \upf{} configuration,
+  what would happen---in terms of power, throughput, CPU, packet loss, delay,
+  and QoS safety?}
+\end{quote}
+
+\noindent
+It is important to be precise about what the twin \emph{is} and \emph{is not},
+because the surrounding system is deliberately decomposed into independent
+parts:
+
+\begin{description}
+  \item[The twin is not a traffic forecaster.] Where the offered load
+    \emph{comes from}---a spatio-temporal forecast over base-station
+    clusters---is the subject of its own chapter
+    (Chapter~\ref{chap:forecaster}). The twin consumes a load value; it does
+    not predict one.
+  \item[The twin is not a controller.] \emph{Which} configuration to choose
+    is a policy decision. The twin only evaluates the consequences of a
+    decision that has already been made. Controllers---both rule-based
+    baselines and learned (reinforcement-learning) agents---are developed and
+    compared in Chapter~\ref{chap:controllers}. To keep the present chapter
+    self-contained while avoiding any pre-emption of that material, every
+    illustration here is driven by a single, transparent, \emph{non-learning}
+    controller (a hysteresis rule, Section~\ref{sec:dt_eval}); the learned
+    controllers and an informed oracle bound are reserved for
+    Chapter~\ref{chap:controllers}.
+\end{description}
+
+This separation of concerns---forecaster, twin, controller---mirrors the
+repository structure of the implementation, in which the twin is a
+\code{pip}-installable library that the controller project depends on but
+never modifies.
+
+The remainder of the chapter proceeds as follows.
+Section~\ref{sec:dt_from_profiling} bridges the profiling results to a
+predictive surrogate and justifies which trained variants the twin actually
+uses. Section~\ref{sec:dt_arch} presents the two evaluation modes (stateless
+physics and stateful rollout) and the data contract.
+Section~\ref{sec:dt_inputs} describes load calibration and the
+NetMob-compatible input adapter. Section~\ref{sec:dt_kpis} defines the
+predicted KPIs and the safety/efficiency semantics.
+Section~\ref{sec:dt_switching} formalises the switching-cost model.
+Section~\ref{sec:dt_thresholds} shows how operating thresholds are
+\emph{derived} from the surrogate rather than hardcoded.
+Section~\ref{sec:dt_eval} defines the evaluation methodology and metrics and
+demonstrates the assembled twin under the hysteresis controller.
+Section~\ref{sec:dt_summary} summarises.
+
+% -- Section 2: From profiling to a predictive surrogate ----------------
+\section{From Profiling to a Predictive Surrogate}
+\label{sec:dt_from_profiling}
+
+The twin's predictive core is the two-layer surrogate introduced in
+Section~\ref{sec:twin}. For completeness we restate its structure and then
+focus on the design decisions specific to embedding it in an online evaluator.
+
+\subsection{Two-layer structure}
+
+For each \upf{} variant the surrogate is organised as a stack that mirrors the
+causal pathway \emph{load $\to$ performance $\to$ power}:
+
+\begin{description}
+  \item[Layer~1 (performance).] Four independent single-target regressors map
+    the offered load to delivered throughput (Gbps), CPU utilisation (\%),
+    downlink packet loss (packets per interval), and downlink one-way delay
+    ($\mu$s).
+  \item[Layer~2 (power).] A single regressor maps the offered load
+    \emph{plus} the four Layer~1 outputs to \code{power\_watts}.
+\end{description}
+
+Because each Layer~1 slot is selected independently by cross-validated model
+search, the chosen algorithm differs by target: the near-linear
+throughput--load relationship is best captured by Ridge regression, whereas
+the strongly non-linear delay and loss responses near saturation are best
+captured by tree ensembles (Random Forest or Gradient Boosting). This
+heterogeneity is a feature, not an inconsistency: forcing a single algorithm
+across all slots would underfit the non-linear targets. One practical
+consequence, visible later in Figure~\ref{fig:dt_surrogate}, is that
+tree-based slots produce \emph{piecewise-constant} predictions and do not
+extrapolate beyond the measured envelope---a property the twin must respect
+when it is queried.
+
+\subsection{Which variants the twin uses}
+\label{sec:dt_variants}
+
+The profiling campaign trained three variants: \code{dpdk},
+\code{usr\_full} (all USR samples, including the saturated regime), and
+\code{usr\_safe} (USR samples restricted to the unsaturated regime below the
+saturation knee). The twin exposes exactly two \emph{actions} to a
+controller---\code{DPDK} and \code{USR}---and maps them to trained variants as
+follows:
+\[
+  \texttt{DPDK} \longmapsto \texttt{dpdk}, \qquad
+  \texttt{USR}  \longmapsto \texttt{usr\_full}.
+\]
+
+\noindent
+The choice of \code{usr\_full} over \code{usr\_safe} to represent \code{USR}
+is deliberate and central to the twin's purpose. A digital twin whose
+remit explicitly includes \emph{packet loss, delay, and QoS safety} must be
+able to represent what happens when \usr{} is pushed past its safe operating
+point. \code{usr\_safe} was trained only on loads where \usr{} never loses
+packets; queried above the knee it would extrapolate near-zero loss and low
+delay, silently hiding the very failure mode the twin exists to detect.
+\code{usr\_full}, having observed the saturation transition, predicts the
+onset of loss and delay faithfully (the corresponding Layer~1 targets reach
+$R^2 = 0.998$ and $0.968$ respectively, against $0.86$ and $0.52$ for
+\code{usr\_safe}). The cost is a marginally noisier power model
+($R^2 = 0.988$ vs.\ $0.999$), which is an acceptable price for correct
+safety behaviour. As Section~\ref{sec:dt_thresholds} shows, the twin's
+ability to \emph{derive} a QoS threshold depends entirely on this property:
+with \code{usr\_safe} the threshold-derivation sweep would never observe an
+unsafe step and the derived limit would be meaningless. The \code{usr\_safe}
+models are therefore retained only as a low-load power reference and are not
+wired into the twin's action map.
+
+\subsection{Full and lite feature sets}
+
+Each variant was trained in two feature regimes. The \emph{full} model accepts
+all seven offered-load features (DL/UL kbits/s, TX packet counts, average
+packet size, and the L2/L3 overhead ratio) and targets laboratory or
+high-fidelity simulation. The \emph{lite} model accepts only the DL/UL load
+volume and is therefore drivable from datasets---such as NetMob~2023---that
+expose only aggregate per-cell load with no packet-level detail. The twin
+loads the \emph{lite} variant exclusively, because its online use case is
+driven by cluster-level load forecasts that carry no per-packet observability.
+The accuracy sacrificed for this interoperability is small: for the power
+model the lite--full gap is $\Delta R^2 \approx 0.024$ for \code{usr\_full}.
+
+% -- Section 3: Architecture --------------------------------------------
+\section{Twin Architecture}
+\label{sec:dt_arch}
+
+The twin offers two evaluation modes over the same surrogate core, reflecting
+the two questions a consumer may ask (Figure~\ref{fig:dt_arch}).
+
+\begin{description}
+  \item[Stateless physics.] \code{evaluate\_action(action, load)} returns the
+    predicted KPIs for a single (action, load) point. It is a pure function:
+    no memory, no side effects. This is the mode used by parameter sweeps, the
+    threshold derivation of Section~\ref{sec:dt_thresholds}, and interactive
+    inspection.
+  \item[Stateful rollout.] A \emph{session} wraps the stateless core with the
+    previous action and applies the switching-cost accounting of
+    Section~\ref{sec:dt_switching}. \code{session.step(requested\_action,
+    load)} returns the realised KPIs for one time step, including any energy
+    paid for activation. This is the mode used to drive a sequential
+    simulation (and, in Chapter~\ref{chap:controllers}, the \code{step()} of
+    a reinforcement-learning environment).
+\end{description}
+
+A consumer constructs a twin from a data directory that follows a fixed
+contract: a \code{profiling\_twin/} subtree containing the surrogate
+\code{models/} (with a \code{manifest.json} registry and \code{layer1/},
+\code{layer2/} model files) and a \code{switching\_costs.yaml}. The twin is
+otherwise configured by a scenario dictionary supplying the QoS budget, the
+switching-accounting policy, and the time-step length. Crucially, the twin
+holds no reference to any controller type; controllers depend on the twin, not
+the reverse.
+
+\begin{figure}[htbp]
+  \centering
+  \drawioplaceholder{%
+    \textbf{Twin architecture / data flow.} A left-to-right block diagram.
+    \emph{Inputs (left):} normalised cluster load $\hat d \in [0,1]$ from the
+    forecaster (Chapter~\ref{chap:forecaster}); a requested action
+    $\in\{\texttt{DPDK},\texttt{USR}\}$ from the controller
+    (Chapter~\ref{chap:controllers}).
+    \emph{Calibration block:} $\hat d \to$ load (Gbps) via the global
+    $\alpha$; load (Gbps) $\to$ lite features (kbits/s).
+    \emph{Surrogate core (centre):} two stacked boxes per action---``Layer~1:
+    4 performance models'' feeding ``Layer~2: power model''---selected from the
+    model registry (\texttt{dpdk} or \texttt{usr\_full}).
+    \emph{Safety/efficiency block:} compares predicted delay/loss against the
+    QoS budget ($\Rightarrow$ \texttt{is\_safe}) and predicted power against
+    the alternative UPF ($\Rightarrow$ \texttt{is\_efficient}).
+    \emph{Switching block (only in stateful mode):} previous action +
+    activation duration + accounting rule $\Rightarrow$ switching energy.
+    \emph{Outputs (right):} a \texttt{UPFResult} (power, delay, throughput,
+    loss, \texttt{is\_safe}, \texttt{is\_efficient}) and, in stateful mode,
+    the switching energy for the step. Draw the two modes as two horizontal
+    lanes sharing the surrogate core; mark the stateless lane as ``pure
+    function'' and the stateful lane as carrying state (previous action).}
+  \caption{Architecture of the digital twin. The surrogate core is shared by
+    a stateless physics mode and a stateful rollout mode; the latter adds the
+    switching-cost model. The twin is controller-agnostic: forecaster and
+    controller are external (Chapters~\ref{chap:forecaster}
+    and~\ref{chap:controllers}).}
+  \label{fig:dt_arch}
+\end{figure}
+
+% -- Section 4: Inputs and calibration ----------------------------------
+\section{Inputs and Load Calibration}
+\label{sec:dt_inputs}
+
+\subsection{Normalised load to physical load}
+
+The forecasting stage emits per-cluster load normalised to $[0,1]$. A single
+global calibration constant $\alpha$ converts this to a physical offered load
+in Gbps:
+\begin{equation}
+  \lambda_{\mathrm{Gbps}} = \alpha \cdot \hat d, \qquad
+  \alpha = 0.12~\text{Gbps per normalised unit}.
+  \label{eq:dt_alpha}
+\end{equation}
+The value of $\alpha$ is a scenario parameter; it sets the physical scale at
+which the (otherwise dimensionless) forecast is interpreted, and hence where a
+given normalised load falls relative to the \usr{} saturation knee.
+
+\subsection{Lite input adapter}
+
+The lite surrogate consumes load volume in kbits/s. The twin converts the
+calibrated load directly,
+\begin{equation}
+  B = \lambda_{\mathrm{Gbps}} \times 10^{6}~[\text{kbits/s}],
+  \label{eq:dt_kbits}
+\end{equation}
+and supplies $B$ as both the downlink and uplink lite features, matching the
+NetMob compatibility adapter of Section~\ref{sec:netmob}. This is the only
+transformation between a controller-facing load value and the model input;
+all remaining (full-model) features are absent by construction in the lite
+regime and are never required.
+
+% -- Section 5: Predicted KPIs and safety semantics ---------------------
+\section{Predicted KPIs and Safety Semantics}
+\label{sec:dt_kpis}
+
+A single evaluation returns a structured result containing the offered load,
+predicted \code{power\_watts}, \code{delay\_us}, \code{throughput\_gbps}, and
+\code{predicted\_loss}, together with two boolean flags that encode the twin's
+two distinct concerns:
+
+\begin{description}
+  \item[\code{is\_safe} (QoS preserved).] True iff the predicted downlink delay
+    is within the configured budget \emph{and} the predicted packet loss does
+    not exceed its tolerance:
+    \begin{equation}
+      \texttt{is\_safe} \;=\;
+      \bigl(\text{loss} \le L_{\max}\bigr) \;\wedge\;
+      \bigl(\text{delay} \le D_{\max}\bigr),
+      \label{eq:dt_is_safe}
+    \end{equation}
+    with the default budget $D_{\max} = 200~\mu$s and zero-tolerance
+    $L_{\max} = 0$ packets per interval. \dpdk{} is safe across the entire
+    measured load range; \usr{} is safe only below its knee.
+  \item[\code{is\_efficient} (locally cheaper).] True iff this action's
+    predicted power is lower than the \emph{other} action's predicted power at
+    the same load. It is a relative, per-load comparison---not an absolute
+    threshold---and is the signal a controller uses to decide whether the
+    energy-cheaper action is still the safe one.
+\end{description}
+
+The two flags are intentionally orthogonal. A \usr{} result with
+\code{is\_safe}=True and \code{is\_efficient}=False denotes a load at which
+\usr{} still meets QoS but already costs more than \dpdk{}: the regime in
+which a controller should prefer \dpdk{} on energy grounds even though \usr{}
+would not violate QoS.
+
+Figure~\ref{fig:dt_surrogate} shows the surrogate's predicted responses over
+the deployable load range. The contrast from Chapter~\ref{chap:upf_profiling}
+is reproduced by the twin: \dpdk{} power and CPU are essentially flat, while
+\usr{} rises with load and its delay and loss turn sharply upward past the
+knee. The piecewise-constant ``staircase'' in the \usr{} curves is the
+signature of the tree-based lite models; it is bounded to the measured
+envelope and does not extrapolate, which is the desired conservative
+behaviour at the edge of the data.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\linewidth]{\figpath{fig_dt_surrogate_curves.png}}
+  \caption{Twin-predicted UPF responses versus offered load (lite surrogate).
+    (a)~Power: \dpdk{} flat near 0.82\,W, \usr{} rising and crossing \dpdk{}
+    at low load; (b)~CPU; (c)~downlink delay (log scale) with the 200\,$\mu$s
+    QoS budget marked; (d)~predicted packet loss (symmetric-log scale). The
+    \usr{} staircase reflects the piecewise-constant nature of the tree-based
+    lite models.}
+  \label{fig:dt_surrogate}
+\end{figure}
+
+% -- Section 6: Switching-cost model ------------------------------------
+\section{Switching-Cost Model}
+\label{sec:dt_switching}
+
+Switching from one \upf{} to the other is not free: the new data plane must be
+activated, which takes time and energy. Modelling this cost is essential, both
+to penalise controllers that flip excessively and to represent the brief
+window during which the new \upf{} is not yet serving traffic.
+
+\subsection{Activation duration and the energy-spike rule}
+
+The activation \emph{duration} is a property of the software stack, not of the
+host: bringing up the DPDK poll-mode driver takes substantially longer than
+starting the interrupt-driven \usr{} path. The twin uses measured durations of
+24.0\,s for \dpdk{} and 3.3\,s for \usr{}.
+
+Absolute switching \emph{energy} measured on one machine is not portable to
+another, but the relationship
+\begin{equation}
+  E_{\mathrm{spike}}(\lambda) \;=\;
+  \frac{P_{\mathrm{steady}}(\lambda)\,\cdot\,t_{\mathrm{act}}}{3600}\quad[\text{Wh}]
+  \label{eq:dt_spike}
+\end{equation}
+holds within the source measurements and \emph{is} portable, because it
+combines a target-machine quantity (the surrogate's predicted steady-state
+power $P_{\mathrm{steady}}$) with a software-stack quantity (the activation
+duration $t_{\mathrm{act}}$). The rule is validated against the source data:
+for \dpdk{}, $34.81~\text{W} \times 24~\text{s} / 3600 \approx 0.232$\,Wh,
+matching the measured spike; for \usr{}, $7.45~\text{W} \times 3.3~\text{s}
+/ 3600 \approx 0.007$\,Wh.
+
+\subsection{Within-step accounting}
+
+Because a simulation step (15\,min at NetMob resolution) is far longer than
+any activation, the twin must decide how a switch that occurs \emph{inside} a
+step is accounted for. Three policies are supported
+(Figure~\ref{fig:dt_switching}); the default is \emph{sub-step}:
+\begin{description}
+  \item[\code{sub\_step} (default).] The old \upf{} serves for
+    $t_{\mathrm{act}}$ seconds and the new \upf{} for the remainder; the
+    step's power is the time-weighted average, and the energy spike is paid
+    once. KPIs are attributed to whichever \upf{} served the majority of the
+    step, while safety is treated conservatively (a step is safe only if
+    \emph{both} the old and new \upf{} are safe at that load).
+  \item[\code{round\_down}.] The switch is treated as instantaneous within the
+    step; only the spike is paid.
+  \item[\code{round\_up}.] The new \upf{} is treated as unavailable for the
+    entire step (worst case); the requested action does not take effect until
+    the next step.
+\end{description}
+
+An optional \emph{prewarm} mode keeps \dpdk{} in standby so that switching to
+it is effectively instantaneous, at the cost of a continuous standby power
+(default 0.05\,W) while it is not the serving \upf{}.
+
+\begin{figure}[htbp]
+  \centering
+  \drawioplaceholder{%
+    \textbf{Within-step switching accounting (\texttt{sub\_step}).} A single
+    horizontal time bar representing one 15-minute step. Partition it into a
+    short leading segment of width $t_{\mathrm{act}}$ (label ``old UPF
+    serving'') and a long trailing segment (label ``new UPF serving''). Above
+    the bar, draw the resulting step power as a weighted average
+    $\bar P = f\,P_{\mathrm{old}} + (1-f)\,P_{\mathrm{new}}$ with
+    $f = t_{\mathrm{act}}/t_{\mathrm{step}}$. Mark a one-off ``energy spike
+    $E_{\mathrm{spike}}$'' at the boundary. Optionally show the two
+    alternatives as smaller bars: \texttt{round\_down} (spike only, instant
+    switch) and \texttt{round\_up} (entire step still on the old UPF, switch
+    deferred). Keep the same colour convention as
+    Figure~\ref{fig:dt_surrogate} (DPDK blue, USR red).}
+  \caption{Within-step accounting of a switch under the \code{sub\_step}
+    policy. The step power is the time-weighted average of the old and new
+    \upf{} power; the activation energy spike is paid once.}
+  \label{fig:dt_switching}
+\end{figure}
+
+% -- Section 7: Derived operating thresholds ----------------------------
+\section{Operating Thresholds Derived from the Surrogate}
+\label{sec:dt_thresholds}
+
+A naive controller might switch \upf{}s at a hand-tuned load threshold. The
+twin instead \emph{derives} its operating points from the surrogate itself, so
+that they remain consistent with the measured physics and update automatically
+if the models are retrained. Two quantities are obtained by sweeping the
+stateless twin over load (Figure~\ref{fig:dt_threshold}):
+
+\begin{description}
+  \item[Energy break-even $\lambda_{\mathrm{be}}$.] The lowest load at which
+    \usr{} power meets or exceeds \dpdk{} power. Below it, \usr{} is the
+    energy-cheaper action; above it, \dpdk{} is.
+  \item[QoS limit $\lambda_{\mathrm{qos}}$.] The highest load at which \usr{}
+    is still \code{is\_safe}. This is the point the sweep \emph{can only find
+    because the twin uses \code{usr\_full}}: it is where the surrogate's
+    predicted loss or delay first crosses the budget.
+\end{description}
+
+\noindent
+For the scenario studied here the sweep yields
+$\lambda_{\mathrm{be}} = 91$\,Mbps and $\lambda_{\mathrm{qos}} = 81$\,Mbps. The
+decision threshold a controller should use is the more conservative of the
+two, minus a safety margin:
+\begin{equation}
+  \lambda_{\mathrm{dec}} \;=\;
+  \min(\lambda_{\mathrm{be}}, \lambda_{\mathrm{qos}}) - m,
+  \qquad m = 10~\text{Mbps},
+  \label{eq:dt_decision}
+\end{equation}
+giving $\lambda_{\mathrm{dec}} = 71$\,Mbps here (QoS-limited).
+
+\subsection{Anti-flapping from forecast uncertainty}
+
+A single decision threshold applied to a noisy forecast would cause rapid,
+wasteful flipping near the boundary. The twin derives a hysteresis band
+directly from the \emph{forecaster's} reported error, so that a single noisy
+forecast cannot trigger a switch:
+\begin{equation}
+  \text{band} = 2 \cdot \mathrm{MAE}_{\mathrm{forecast}},\qquad
+  \lambda_{\uparrow} = \lambda_{\mathrm{dec}},\qquad
+  \lambda_{\downarrow} = \lambda_{\mathrm{dec}} - \text{band}.
+  \label{eq:dt_band}
+\end{equation}
+With the forecaster's mean absolute error of $\approx 13.3$\,Mbps for the
+operating cluster count, the band is $\approx 26.6$\,Mbps, giving an
+upper switch point $\lambda_{\uparrow} = 71$\,Mbps and a lower one
+$\lambda_{\downarrow} = 44$\,Mbps. The controller switches \usr{}$\to$\dpdk{}
+only when the predicted load rises above $\lambda_{\uparrow}$, and back only
+when it falls below $\lambda_{\downarrow}$.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\linewidth]{\figpath{fig_dt_threshold_derivation.png}}
+  \caption{Operating thresholds derived from the surrogate. \usr{} power
+    (red) crosses \dpdk{} power (blue) at the energy break-even
+    ($91$\,Mbps); the QoS limit ($81$\,Mbps) is where \usr{} first becomes
+    unsafe. The decision threshold $\lambda_{\uparrow}=71$\,Mbps is the
+    binding (QoS) limit minus a 10\,Mbps margin; the shaded band down to
+    $\lambda_{\downarrow}=44$\,Mbps is the forecast-derived hysteresis region.
+    The green region marks loads where \usr{} is both safe and cheaper than
+    \dpdk{}.}
+  \label{fig:dt_threshold}
+\end{figure}
+
+% -- Section 8: Evaluation methodology + demonstration ------------------
+\section{Evaluation Methodology and Demonstration}
+\label{sec:dt_eval}
+
+\subsection{Rollout engine}
+
+To evaluate any controller, the twin is driven over the full test set of
+per-cluster load windows. For efficiency the rollout pre-evaluates the
+stateless twin once for both actions over the entire flattened array of loads,
+then performs the conceptually sequential per-cluster loop in pure Python:
+each step reads the controller's requested action, looks up the precomputed
+KPIs, and applies the switching-cost accounting of
+Section~\ref{sec:dt_switching}. The result is one record per cluster-step,
+suitable for aggregation. In the scenario studied here this is $K=10$ clusters
+$\times$ $1009$ windows $= 10{,}090$ steps of 15\,min each.
+
+\subsection{Metrics}
+
+From the per-step records the following metrics are computed. Energy includes
+both steady-state consumption ($\text{power} \times \Delta t$) and the
+switching spikes of Equation~\eqref{eq:dt_spike}, so that flipping is
+penalised:
+\begin{description}
+  \item[Total energy (Wh)] and \textbf{average power (W)} over all steps.
+  \item[Energy saving (\%)] relative to the always-\dpdk{} baseline.
+  \item[Unsafe USR rate] the fraction of \usr{}-serving steps that violated
+    QoS---the key safety metric.
+  \item[USR usage (\%)] the fraction of steps served by \usr{}.
+  \item[Decision flip rate] the per-cluster fraction of steps at which the
+    serving \upf{} changed---a proxy for churn.
+\end{description}
+
+\subsection{Controllers used in this chapter}
+
+As stated in Section~\ref{sec:dt_intro}, this chapter exercises only
+non-learning controllers, so that the figures characterise the \emph{twin}
+rather than any particular learned policy:
+\begin{description}
+  \item[Static \dpdk{}] always selects \dpdk{} (the safe, high-power
+    reference).
+  \item[Static \usr{}] always selects \usr{} (maximally energy-greedy, and
+    unsafe whenever load exceeds the knee).
+  \item[Hysteresis] the rule of Equation~\eqref{eq:dt_band}, consuming the
+    surrogate-derived thresholds and the forecast-derived band, with a
+    one-step cooldown after each switch.
+\end{description}
+Learned controllers, an informed oracle upper bound, and the single-threshold
+policy are evaluated in Chapter~\ref{chap:controllers}; they are deliberately
+omitted here.
+
+\subsection{Why energy-aware switching pays}
+
+The case for switching at all rests on the load distribution.
+Figure~\ref{fig:dt_load_dist} shows that the offered load is heavily
+right-skewed: roughly 78\,\% of all cluster-steps fall below the
+decision threshold, i.e.\ in the regime where \usr{} is both safe and cheaper
+than \dpdk{}. A controller that exploits this---running \usr{} at low load and
+\dpdk{} only when load rises---stands to recover most of \dpdk{}'s fixed power
+cost without violating QoS.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\linewidth]{\figpath{fig_dt_load_distribution.png}}
+  \caption{Distribution of calibrated offered load across all clusters and
+    time windows. About 78\,\% of cluster-steps lie below the derived decision
+    threshold (dashed), i.e.\ in the regime where \usr{} is the safe and
+    cheaper action.}
+  \label{fig:dt_load_dist}
+\end{figure}
+
+\subsection{The twin under a hysteresis controller}
+
+Figure~\ref{fig:dt_rollout} shows a representative window of one cluster's
+rollout. The controller holds \usr{} while the predicted load stays within the
+hysteresis band, switches to \dpdk{} when load rises above $\lambda_{\uparrow}$,
+and returns to \usr{} only after load falls below $\lambda_{\downarrow}$; the
+power trace (lower panel) accordingly sits near \dpdk{}'s 0.82\,W floor during
+high-load excursions and drops into \usr{}'s low-power regime otherwise. The
+band visibly prevents single-sample flips around the threshold.
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\linewidth]{\figpath{fig_dt_hysteresis_rollout.png}}
+  \caption{A representative window of the hysteresis controller driving the
+    twin (one cluster). Upper: actual and predicted load with the switch
+    points $\lambda_{\uparrow}$, $\lambda_{\downarrow}$; shaded spans mark
+    \usr{}-served steps. Lower: the twin's predicted power, near the \dpdk{}
+    floor when \dpdk{} serves and low when \usr{} serves.}
+  \label{fig:dt_rollout}
+\end{figure}
+
+\subsection{Aggregate behaviour}
+
+Table~\ref{tab:dt_metrics} and Figure~\ref{fig:dt_comparison} summarise the
+three controllers over all $10{,}090$ steps. Static \usr{} saves
+37\,\% of energy versus static \dpdk{} but is \emph{unsafe on
+18.8\,\% of its steps}---the direct consequence of ignoring the saturation
+knee. The hysteresis rule, by respecting the surrogate-derived QoS limit,
+saves \emph{more} energy (49\,\%) while cutting the unsafe rate to
+1.7\,\%, by ceding to \dpdk{} exactly on the minority of high-load steps where
+\usr{} would fail. This is the central demonstration that the twin behaves as
+intended: it exposes the energy--safety trade-off quantitatively, and a
+controller that consumes its safety signal dominates one that does not.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Aggregate metrics over $10{,}090$ cluster-steps (non-learning
+    controllers; learned controllers and oracle bound are deferred to
+    Chapter~\ref{chap:controllers}). Energy includes switching spikes.}
+  \label{tab:dt_metrics}
+  \setlength{\tabcolsep}{6pt}
+  \begin{tabular}{lrrrrr}
+    \toprule
+    \textbf{Controller} & \textbf{Energy (Wh)} & \textbf{Avg power (W)}
+      & \textbf{Saving (\%)} & \textbf{Unsafe USR (\%)} & \textbf{USR use (\%)} \\
+    \midrule
+    Static \dpdk{} & $2067.1$ & $0.819$ & $0.0$  & $0.0$  & $0.0$  \\
+    Static \usr{}  & $1296.1$ & $0.464$ & $37.3$ & $18.8$ & $100.0$ \\
+    Hysteresis     & $1049.9$ & $0.378$ & $49.2$ & $1.7$  & $75.6$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+  \centering
+  \includegraphics[width=\linewidth]{\figpath{fig_dt_policy_comparison.png}}
+  \caption{Aggregate comparison of the non-learning controllers.
+    (a)~Total energy (with saving vs.\ static \dpdk{} annotated);
+    (b)~unsafe \usr{} rate; (c)~\usr{} usage. Hysteresis saves the most energy
+    \emph{and} is nearly always safe, whereas static \usr{} is cheap but
+    frequently unsafe.}
+  \label{fig:dt_comparison}
+\end{figure}
+
+% -- Section 9: Summary -------------------------------------------------
+\section{Summary}
+\label{sec:dt_summary}
+
+This chapter constructed a measurement-grounded digital twin of the \upf{}
+data plane from the profiling results of Chapter~\ref{chap:upf_profiling}. The
+principal points are:
+
+\begin{enumerate}
+  \item \textbf{Scope.} The twin answers ``what would happen'' for a given
+    (load, action) pair; it is neither a forecaster
+    (Chapter~\ref{chap:forecaster}) nor a controller
+    (Chapter~\ref{chap:controllers}), and is kept strictly controller-agnostic.
+  \item \textbf{Variant choice.} \code{USR} is represented by \code{usr\_full},
+    not \code{usr\_safe}, precisely because a safety-aware twin must be able to
+    predict the saturated regime; \code{usr\_safe} would hide the failure mode
+    and break threshold derivation.
+  \item \textbf{Two modes.} A stateless physics mode and a stateful rollout
+    mode share one surrogate core; the latter adds a portable switching-cost
+    model based on a measured activation duration and an energy-spike scaling
+    rule.
+  \item \textbf{Derived, not hardcoded, thresholds.} The energy break-even and
+    QoS limit are swept from the surrogate, and an anti-flapping band is
+    derived from the forecaster's own error, keeping operating points
+    consistent with the measured physics.
+  \item \textbf{Demonstration.} Driven by a transparent hysteresis controller,
+    the twin recovers 49\,\% of \dpdk{}'s energy while remaining safe on
+    98.3\,\% of \usr{} steps, quantitatively exposing the energy--safety
+    trade-off that learned controllers will later be trained to navigate.
+\end{enumerate}
+
+\end{document}

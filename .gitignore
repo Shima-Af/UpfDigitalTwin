@@ -16,7 +16,10 @@ __pycache__/
 
 models/
 results/
-reports/figures/
+# reports/figures/ is intentionally TRACKED: the thesis chapter embeds these
+# PNGs, and regenerating them requires the DVC data plus the exact scenario
+# config the chapter was computed under. ~1.1 MB.
+
 mlruns/
 mlflow.db
 

@@ -7,6 +7,7 @@ Run from the project root:
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -24,9 +25,57 @@ from upf_digital_twin.twin.upf_profile import UPFResult
 from upf_digital_twin.policies.hysteresis import HysteresisPolicy
 
 # ── Page config ──────────────────────────────────────────────────────────────
-st.set_page_config(page_title="UPF Digital Twin", page_icon="📡", layout="wide")
+st.set_page_config(
+    page_title="UPF Digital Twin · Energy-Aware Orchestration",
+    page_icon="📡",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# ── Color palette (matches mockup style) ─────────────────────────────────────
+# ── Global theme / CSS (Inter font, dark product look, hide Streamlit chrome) ──
+st.markdown(
+    """
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+      html, body, [class*="css"], .stApp, [data-testid="stSidebar"] {
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      }
+      .stApp {
+          background: radial-gradient(1200px 600px at 15% -10%, #15233b 0%, #0b1220 55%) fixed;
+          color: #e6edf6;
+      }
+      #MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] { display: none !important; }
+      header[data-testid="stHeader"] { background: transparent; height: 0; }
+      .block-container { padding-top: 2.2rem; padding-bottom: 2rem; max-width: 1500px; }
+      h1, h2, h3, h4, h5 { font-family: 'Inter', sans-serif; letter-spacing: -0.015em; font-weight: 600; }
+      .stTabs [data-baseweb="tab-list"] { gap: 4px; border-bottom: 1px solid rgba(255,255,255,.06); }
+      .stTabs [data-baseweb="tab"] {
+          height: 42px; padding: 0 18px; background: transparent; color: #93a6bd;
+          font-weight: 500; font-size: 13.5px; border-radius: 9px 9px 0 0;
+      }
+      .stTabs [aria-selected="true"] {
+          background: rgba(34,211,238,.10); color: #e6edf6; border-bottom: 2px solid #22d3ee;
+      }
+      [data-testid="stSidebar"] { background: #0c1424; border-right: 1px solid rgba(255,255,255,.06); }
+      [data-testid="stSidebar"] .block-container { padding-top: 1.2rem; }
+      [data-testid="stMetric"] {
+          background: #131c2e; border: 1px solid rgba(255,255,255,.07);
+          border-radius: 12px; padding: 12px 16px;
+      }
+      [data-testid="stMetricLabel"] p { color: #93a6bd; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+      [data-testid="stExpander"] { border: 1px solid rgba(255,255,255,.07); border-radius: 10px; background: rgba(255,255,255,.02); }
+      .stButton > button {
+          border-radius: 9px; border: 1px solid rgba(34,211,238,.35);
+          background: rgba(34,211,238,.10); color: #cfeffb; font-weight: 600;
+      }
+      .stButton > button:hover { border-color: #22d3ee; background: rgba(34,211,238,.18); }
+      [data-testid="stDataFrame"] { border: 1px solid rgba(255,255,255,.06); border-radius: 10px; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ── Color palette (chart traces) ─────────────────────────────────────────────
 COL_DPDK     = "#378ADD"
 COL_USR      = "#1D9E75"
 COL_TRAFFIC  = "#BA7517"
@@ -92,6 +141,23 @@ spec = derive_thresholds(twin, safety_margin_mbps=safety_margin_mbps,
 pred_gbps = pred * alpha
 tgt_gbps  = tgt  * alpha
 cs_gbps   = cs   * alpha
+
+# ── Friendly naming: traffic regions + forecast lead times ───────────────────
+# Demo-friendly names for the K traffic-similarity zones (Lyon areas).
+REGION_NAMES = [
+    "Presqu'île", "Part-Dieu", "Confluence", "Croix-Rousse", "Villeurbanne",
+    "Gerland", "Vaise", "Bron", "Vénissieux", "Guillotière",
+]
+
+def region_label(k: int) -> str:
+    return REGION_NAMES[k] if 0 <= k < len(REGION_NAMES) else f"Zone {k}"
+
+def lead_label(h: int) -> str:
+    mins = (h + 1) * int(time_step_min)
+    if mins < 60:
+        return f"{mins} min ahead"
+    h_, m_ = divmod(mins, 60)
+    return f"{h_} h ahead" if m_ == 0 else f"{h_} h {m_} min ahead"
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -302,39 +368,258 @@ def metric_card(label: str, value: str, sub: str = "", color: str = None) -> str
     )
 
 
-# ── Sidebar (always visible) ─────────────────────────────────────────────────
-st.sidebar.title("📡 UPF Digital Twin")
-st.sidebar.markdown(f"**Service:** {fes.get('service','?')} · **K=**{K} · **N=**{N} · **H=**{H}")
-st.sidebar.markdown(f"**α** = {alpha} Gbps/norm · **dt** = {time_step_min} min")
+# ── Sidebar ──────────────────────────────────────────────────────────────────
+def _srow(label: str, value: str, accent: str = "#e6edf6") -> str:
+    return ("<div style='display:flex;justify-content:space-between;font-size:12px;"
+            "padding:3px 0;color:#9fb0c3'>"
+            f"<span>{label}</span><b style='color:{accent}'>{value}</b></div>")
 
-st.sidebar.divider()
-st.sidebar.subheader("Derived thresholds")
-st.sidebar.markdown(f"""
-- Energy break-even: **{spec.energy_breakeven_gbps*1000:.1f}** Mbps
-- QoS limit: **{spec.qos_limit_gbps*1000:.1f}** Mbps
-- Decision T: **{spec.decision_gbps*1000:.1f}** Mbps
-- T_up / T_down: {spec.t_up_gbps*1000:.1f} / {spec.t_down_gbps*1000:.1f} Mbps
-- Hysteresis band: {spec.hysteresis_band_gbps*1000:.1f} Mbps
-""")
-st.sidebar.caption(spec.derived_from)
+with st.sidebar:
+    st.markdown(
+        "<div style='display:flex;align-items:center;gap:10px;margin:.1rem 0 .2rem'>"
+        "<div style='width:32px;height:32px;border-radius:9px;background:linear-gradient(135deg,#22d3ee,#2dd4bf);"
+        "display:flex;align-items:center;justify-content:center;font-size:17px'>📡</div>"
+        "<div><div style='font-size:15px;font-weight:700;line-height:1.05'>UPF Digital Twin</div>"
+        "<div style='font-size:10px;color:#7e93aa;letter-spacing:.06em;text-transform:uppercase'>Energy-Aware Orchestration</div>"
+        "</div></div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div style='height:1px;background:rgba(255,255,255,.07);margin:.8rem 0 .6rem'></div>", unsafe_allow_html=True)
 
-with st.sidebar.expander("ℹ️ Window / horizon"):
-    st.markdown(f"""
-- **K = {K}** clusters of base stations grouped by traffic similarity.
-- **N = {N}** test windows. Each window starts at one time-step and is 1 sample of the test set.
-- **H = {H}** forecast steps per window. h=0 = next step, h=3 = 1 hour ahead.
-""")
+    span_days = N * float(time_step_min) / 60 / 24
+    st.markdown(
+        "<div style='font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#6f8298;margin-bottom:4px'>Network</div>"
+        + _srow("Service", str(fes.get("service", "?")))
+        + _srow("Traffic regions", str(K))
+        + _srow("Replay span", f"{span_days:.1f} days")
+        + _srow("Resolution", f"{time_step_min} min"),
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div style='height:1px;background:rgba(255,255,255,.07);margin:.7rem 0 .6rem'></div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div style='font-size:10px;text-transform:uppercase;letter-spacing:.12em;color:#6f8298;margin-bottom:4px'>Derived operating point</div>"
+        + _srow("Decision", f"{spec.decision_gbps*1000:.0f} Mbps", "#22d3ee")
+        + _srow("Energy break-even", f"{spec.energy_breakeven_gbps*1000:.0f} Mbps")
+        + _srow("QoS limit", f"{spec.qos_limit_gbps*1000:.0f} Mbps")
+        + _srow("Hysteresis band", f"{spec.hysteresis_band_gbps*1000:.0f} Mbps"),
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<div style='font-size:10px;color:#6f8298;margin-top:10px;line-height:1.5'>"
+        f"Surrogate-grounded · NetMob Lyon<br>{spec.derived_from}</div>",
+        unsafe_allow_html=True,
+    )
 
 # ── Tabs ─────────────────────────────────────────────────────────────────────
-tab_orch, tab_live, tab_curves, tab_clusters, tab_pareto, tab_cf, tab_model = st.tabs([
-    "🎛️  Orchestration",
-    "▶️  Live",
-    "📈  Curves",
-    "🌍  Clusters",
-    "📐  Pareto",
-    "🔁  Counterfactual",
-    "🧪  Model quality",
+tab_demo, tab_orch, tab_curves, tab_clusters, tab_pareto, tab_model = st.tabs([
+    "📊  Overview",
+    "🛰️  Operations",
+    "🔬  Twin Explorer",
+    "🗺️  Regions",
+    "⚖️  Trade-offs",
+    "✅  Model quality",
 ])
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Tab 0 — Investor demo: shadow-mode Ops Replay Cockpit
+# ═════════════════════════════════════════════════════════════════════════════
+with tab_demo:
+    st.markdown(
+        "<div style='font-size:10px;letter-spacing:.12em;text-transform:uppercase;"
+        "color:#888780;font-family:monospace'>UpfDigitalTwin · Shadow mode · NetMob Lyon</div>"
+        "<div style='font-size:17px;font-weight:600;margin-bottom:2px'>"
+        "Energy-Aware UPF Orchestration — Replay</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- Controls ---
+    cc1, cc2, cc3 = st.columns([2, 1, 1])
+    with cc1:
+        demo_ctrl = st.radio(
+            "Controller", ["threshold", "hysteresis", "oracle"],
+            format_func=lambda x: {
+                "threshold":  "Threshold (deployable)",
+                "hysteresis": "Hysteresis",
+                "oracle":     "Oracle (perfect forecast)",
+            }[x],
+            index=0, horizontal=True, label_visibility="collapsed",
+        )
+    busiest = int(tgt_gbps[:, 0, :].mean(axis=0).argmax())
+    with cc2:
+        demo_cluster = st.selectbox("Region", list(range(K)), index=busiest,
+                                    format_func=region_label, key="demo_cluster")
+    with cc3:
+        demo_horizon = st.selectbox("Forecast lead", list(range(H)), index=0,
+                                    format_func=lead_label, key="demo_horizon")
+
+    with st.expander("⚙︎ Fleet & cost assumptions (drive the annualized figures)"):
+        a1, a2, a3 = st.columns(3)
+        fleet_n  = a1.number_input("Fleet size (UPF instances)", 1, 1_000_000, 1000, step=100)
+        eur_kwh  = a2.number_input("Electricity price (€/kWh)", 0.0, 2.0, 0.12, step=0.01, format="%.2f")
+        gco2_kwh = a3.number_input("Grid intensity (gCO₂e/kWh)", 0.0, 1000.0, 50.0, step=10.0,
+                                   help="France/Lyon grid is nuclear-heavy (~50). Higher elsewhere.")
+
+    # --- Episodes: controller vs always-DPDK baseline (cached) ---
+    ep      = run_episode(demo_ctrl, demo_cluster, demo_horizon)
+    ep_dpdk = run_episode("static_dpdk", demo_cluster, demo_horizon)
+
+    # --- Play / scrub ---
+    ss = st.session_state
+    ss.setdefault("demo_slider", N - 1)
+    ss.setdefault("demo_play", False)
+    pcol, scol, icol = st.columns([1, 1, 4])
+    if pcol.button("⏸ Pause" if ss.demo_play else "▶ Play", use_container_width=True):
+        ss.demo_play = not ss.demo_play
+    speed = scol.selectbox("Speed", [1, 2, 4], index=1, label_visibility="collapsed")
+    # Advance the cursor BEFORE the slider is instantiated (safe session_state write).
+    if ss.demo_play:
+        nxt = ss.demo_slider + max(1, (N // 120) * speed)
+        if nxt >= N - 1:
+            nxt, ss.demo_play = N - 1, False
+        ss.demo_slider = nxt
+    t = st.slider("scrub", 0, N - 1, key="demo_slider", label_visibility="collapsed")
+    with icol:
+        hh = (t * time_step_min) // 60
+        st.markdown(
+            f"<div style='font-size:11px;color:#888780;font-family:monospace;padding-top:8px'>"
+            f"replaying slot <b>{t}</b>/{N - 1} · t+{hh // 24:.0f}d {hh % 24:.0f}h · "
+            f"<span style='color:{COL_USR}'>shadow mode — no live actuation</span></div>",
+            unsafe_allow_html=True,
+        )
+
+    # --- Cumulative metrics up to t ---
+    m      = cumulative_metrics(ep, t)
+    m_dpdk = cumulative_metrics(ep_dpdk, t)
+    saved_pct = (m_dpdk["energy_wh"] - m["energy_wh"]) / m_dpdk["energy_wh"] * 100 if m_dpdk["energy_wh"] > 0 else 0.0
+    sla_pct   = 100.0 - m["viol_pct"]
+    sla_color = COL_USR if sla_pct >= 99.0 else COL_THRESH
+
+    # Annualized fleet impact (EXTRAPOLATED): avg power saved/instance × 8760h × N
+    sl = slice(0, t + 1)
+    avg_saved_w   = float(ep_dpdk["power"][sl].mean() - ep["power"][sl].mean())
+    kwh_yr_inst   = max(0.0, avg_saved_w) * 8760.0 / 1000.0
+    fleet_kwh_yr  = kwh_yr_inst * fleet_n
+    fleet_eur_yr  = fleet_kwh_yr * eur_kwh
+    fleet_tco2_yr = fleet_kwh_yr * gco2_kwh / 1e6  # g → t
+
+    # --- Hero KPI strip ---
+    cards = "<div style='display:flex;gap:8px;margin:.4rem 0 .7rem'>"
+    cards += metric_card("Energy saved",  f"{saved_pct:.0f}%",                "vs always-DPDK", color=COL_USR)
+    cards += metric_card("SLA adherence", f"{sla_pct:.1f}%",                  "QoS ≥ 0.90", color=sla_color)
+    cards += metric_card("Fleet energy",  f"{fleet_kwh_yr / 1000:,.0f} MWh/yr", f"@ {fleet_n:,} instances")
+    cards += metric_card("OPEX saved",    f"€{fleet_eur_yr:,.0f}/yr",         f"@ €{eur_kwh:.2f}/kWh")
+    cards += metric_card("CO₂ avoided",   f"{fleet_tco2_yr:,.0f} t/yr",       f"@ {gco2_kwh:.0f} gCO₂/kWh")
+    cards += "</div>"
+    st.markdown(cards, unsafe_allow_html=True)
+    st.caption(
+        "Annualized figures are **extrapolations** (representative cluster load × 8 760 h × fleet size). "
+        "Energy saved, SLA, traffic and power are measured by the twin over real NetMob Lyon traffic."
+    )
+
+    # --- UPF configuration timeline strip ---
+    st.markdown(
+        "<div style='display:flex;gap:14px;margin:.2rem 0 4px;align-items:center'>"
+        "<span style='font-size:10px;color:#888780;text-transform:uppercase;letter-spacing:.08em'>UPF configuration:</span>"
+        f"<span style='font-size:11px;color:#888780'><span style='display:inline-block;width:9px;height:9px;border-radius:2px;background:{COL_DPDK};margin-right:4px'></span>DPDK</span>"
+        f"<span style='font-size:11px;color:#888780'><span style='display:inline-block;width:9px;height:9px;border-radius:2px;background:{COL_USR};margin-right:4px'></span>USR</span>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(make_strip_html(ep["realised"], t, N), unsafe_allow_html=True)
+
+    # --- Reveal helper (everything draws up to the cursor t) ---
+    x = np.arange(N)
+    past = x <= t
+
+    def _reveal(arr):
+        return np.where(past, arr, np.nan)
+
+    # --- Traffic ---
+    st.markdown(
+        "<p style='font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:#888780;margin:.6rem 0 3px'>Traffic load (Mbps)</p>",
+        unsafe_allow_html=True,
+    )
+    f_traffic = go.Figure()
+    f_traffic.add_trace(go.Scatter(x=x, y=_reveal(ep["actual_mbps"]), mode="lines",
+                                   line=dict(color=COL_TRAFFIC, width=1.6), name="Traffic"))
+    f_traffic.add_hline(y=spec.decision_gbps * 1000, line_dash="dash", line_color=COL_THRESH, line_width=1,
+                        annotation_text=f"decision {spec.decision_gbps * 1000:.0f} Mbps",
+                        annotation_position="top right",
+                        annotation=dict(font_size=9, font_color=COL_THRESH))
+    f_traffic.update_layout(margin=dict(l=10, r=10, t=4, b=4), height=140,
+                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False,
+                            xaxis=dict(showgrid=True, gridcolor="rgba(136,135,128,.12)", tickfont=dict(size=9, color="#888780")),
+                            yaxis=dict(showgrid=True, gridcolor="rgba(136,135,128,.12)", tickfont=dict(size=9, color="#888780")))
+    st.plotly_chart(f_traffic, use_container_width=True, config={"displayModeBar": False})
+
+    # --- Power vs baseline (signature 'savings gap') + QoS ---
+    pL, pR = st.columns([3, 2])
+    with pL:
+        st.markdown(
+            "<p style='font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:#888780;margin:0 0 3px'>Attributed power — shaded area = energy saved</p>",
+            unsafe_allow_html=True,
+        )
+        f_pow = go.Figure()
+        f_pow.add_trace(go.Scatter(x=x, y=_reveal(ep_dpdk["power"]), mode="lines",
+                                   line=dict(color=COL_DPDK, width=1.3, dash="dot"), name="Always-DPDK baseline"))
+        f_pow.add_trace(go.Scatter(x=x, y=_reveal(ep["power"]), mode="lines",
+                                   line=dict(color=COL_POWER, width=1.8), name="Controller",
+                                   fill="tonexty", fillcolor="rgba(29,158,117,0.20)"))
+        f_pow.update_layout(margin=dict(l=10, r=10, t=4, b=4), height=160,
+                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
+                            legend=dict(orientation="h", y=1.18, font=dict(size=9), bgcolor="rgba(0,0,0,0)"),
+                            xaxis=dict(showgrid=True, gridcolor="rgba(136,135,128,.12)", tickfont=dict(size=9, color="#888780")),
+                            yaxis=dict(showgrid=True, gridcolor="rgba(136,135,128,.12)", tickfont=dict(size=9, color="#888780")))
+        st.plotly_chart(f_pow, use_container_width=True, config={"displayModeBar": False})
+    with pR:
+        st.markdown(
+            f"<p style='font-size:10px;text-transform:uppercase;letter-spacing:.09em;color:#888780;margin:0 0 3px'>QoS compliance · <span style='color:{sla_color}'>SLA {sla_pct:.1f}%</span></p>",
+            unsafe_allow_html=True,
+        )
+        f_qos = go.Figure()
+        f_qos.add_trace(go.Scatter(x=x, y=_reveal(ep["qos"]), mode="lines",
+                                   line=dict(color=COL_QOS, width=1.6), name="QoS"))
+        f_qos.add_hline(y=0.9, line_dash="dash", line_color=COL_THRESH, line_width=1,
+                        annotation_text="τ = 0.90", annotation_position="bottom right",
+                        annotation=dict(font_size=9, font_color=COL_THRESH))
+        f_qos.update_layout(margin=dict(l=10, r=10, t=4, b=4), height=160,
+                            paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", showlegend=False,
+                            yaxis=dict(range=[0.5, 1.02], showgrid=True, gridcolor="rgba(136,135,128,.12)", tickfont=dict(size=9, color="#888780")),
+                            xaxis=dict(showgrid=True, gridcolor="rgba(136,135,128,.12)", tickfont=dict(size=9, color="#888780")))
+        st.plotly_chart(f_qos, use_container_width=True, config={"displayModeBar": False})
+
+    # --- Honesty band: forecast vs hindsight ---
+    oracle_dec = np.where(ep["actual_mbps"] / 1000.0 < spec.decision_gbps, "USR", "DPDK")
+    disagree = ep["decisions"][:t + 1] != oracle_dec[:t + 1]
+    n_dis = int(disagree.sum())
+    held = int((disagree & (ep["qos"][:t + 1] >= 0.9)).sum())
+    st.markdown(
+        f"<div style='font-size:11px;color:#888780;border-left:3px solid {COL_USR};padding:6px 10px;margin:.4rem 0;background:rgba(136,135,128,.05)'>"
+        f"<b>Forecast honesty:</b> the controller acts on a <i>forecast</i>. So far it disagreed with perfect "
+        f"hindsight at <b>{n_dis}</b> of {t + 1} steps — the safety margin held QoS at <b>{held}/{n_dis}</b> of them. "
+        f"Shadow-mode replay over real traffic, not a live network.</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- How it works / provenance ---
+    with st.expander("🛈 How it works · model provenance · path to live"):
+        lite_r2 = float(np.mean([e["r2"] for e in manifest.values() if e.get("model_variant") == "lite"]))
+        wape = next((r.get("test_wape") for r in fes.get("results", []) if int(r.get("K", -1)) == K), None)
+        wape_str = f"{wape:.1f}%" if wape is not None else "n/a"
+        st.markdown(
+            "**Closed loop (today = step 1, shadow):** traffic forecast → digital-twin what-if "
+            "(power / QoS / safety) → policy picks UPF mode → *(live: orchestrator actuates)*.\n\n"
+            f"- Surrogate fidelity: mean **R² = {lite_r2:.3f}** across lite models · "
+            f"forecast **WAPE = {wape_str}** at K={K}\n"
+            "- Twin is **measurement-grounded** (UpfProfilingCampaign); traffic is **real NetMob Lyon**.\n"
+            "- Path to live: shadow → human-in-the-loop → guarded closed loop "
+            "(SLA circuit-breaker + auto-rollback)."
+        )
+
+    # --- Auto-advance the replay ---
+    if ss.demo_play:
+        time.sleep(0.08)
+        st.rerun()
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Tab 1 — Orchestration (the showpiece view, inspired by the HTML mockup)
@@ -370,10 +655,10 @@ with tab_orch:
     # Cluster + horizon selectors
     sel1, sel2, _ = st.columns([1, 1, 4])
     with sel1:
-        cluster = st.selectbox("Cluster", list(range(K)), index=9)
+        cluster = st.selectbox("Region", list(range(K)), index=9, format_func=region_label)
     with sel2:
-        horizon = st.selectbox("Horizon", list(range(H)), index=0,
-                                help="0 = immediate next step")
+        horizon = st.selectbox("Forecast lead", list(range(H)), index=0, format_func=lead_label,
+                                help="how far ahead the controller acts on the forecast")
 
     # Episode results are cached via @st.cache_data → instant on revisit
     eps = {
@@ -507,9 +792,10 @@ with tab_orch:
 
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Tab 2 — Live evaluation
+# Twin Explorer — single-point what-if (folded in from the old Live tab)
 # ═════════════════════════════════════════════════════════════════════════════
-with tab_live:
+with tab_curves:
+    st.markdown("##### Single-point what-if — set a load, compare DPDK vs USR")
     load_gbps = st.slider("Offered load (Gbps)", 0.0, 0.50, 0.05, 0.001, format="%.3f")
 
     r_dpdk = twin.evaluate_action("DPDK", load_gbps)
@@ -546,6 +832,8 @@ with tab_live:
 # Tab 3 — Curves
 # ═════════════════════════════════════════════════════════════════════════════
 with tab_curves:
+    st.divider()
+    st.markdown("##### Power / delay / loss vs offered load")
     loads, b_dpdk, b_usr = precompute_curves(id(twin))
 
     policy_power = np.where(loads < spec.decision_gbps, b_usr["power_watts"], b_dpdk["power_watts"])
@@ -576,7 +864,7 @@ with tab_curves:
 # Tab 4 — Clusters
 # ═════════════════════════════════════════════════════════════════════════════
 with tab_clusters:
-    st.markdown(f"**{len(bs_loc)} base stations** in Lyon, grouped into **K={K}** traffic clusters.")
+    st.markdown(f"**{len(bs_loc)} base stations** across Lyon, grouped into **{K} traffic regions** by demand similarity.")
     bs_with_cluster = bs_loc.merge(ca, on="site_id", how="left").dropna()
     palette = ["#e74c3c", "#3498db", "#2ecc71", "#f39c12", "#9b59b6",
                "#1abc9c", "#e67e22", "#34495e", "#f1c40f", "#7f8c8d"]
@@ -588,17 +876,18 @@ with tab_clusters:
         st.map(bs_with_cluster.rename(columns={"lat":"latitude","lon":"longitude"}),
                size=20, color="color", zoom=10)
     with c_stats:
-        st.markdown("##### Cluster statistics")
+        st.markdown("##### Region statistics")
         sizes = pd.Series({int(k): len(v) for k, v in bsmap.items()}, name="# BS").sort_index()
         peak  = pd.Series({i: cs_gbps[i].max() for i in range(K)}, name="Peak (Gbps)").sort_index()
         mean  = pd.Series({i: cs_gbps[i].mean() for i in range(K)}, name="Mean (Gbps)").sort_index()
         cstats = pd.concat([sizes, peak.round(3), mean.round(3)], axis=1)
-        cstats.index.name = "Cluster"
+        cstats.index = [region_label(int(i)) for i in cstats.index]
+        cstats.index.name = "Region"
         st.dataframe(cstats, use_container_width=True)
 
     st.divider()
     st.markdown("##### Traffic time series (full historical data)")
-    sel_cluster = st.selectbox("Cluster", list(range(K)), index=0, key="ck")
+    sel_cluster = st.selectbox("Region", list(range(K)), index=0, format_func=region_label, key="ck")
     series = cs_gbps[sel_cluster]
     df_ts = pd.DataFrame({"Time step (15 min)": np.arange(len(series)), "Load (Gbps)": series}).set_index("Time step (15 min)")
     st.line_chart(df_ts)
@@ -652,14 +941,15 @@ with tab_pareto:
     st.caption(f"Current decision threshold (derived): **{spec.decision_gbps*1000:.1f} Mbps**")
 
 # ═════════════════════════════════════════════════════════════════════════════
-# Tab 6 — Counterfactual
+# Trade-offs — per-window what-if (folded in from the old Counterfactual tab)
 # ═════════════════════════════════════════════════════════════════════════════
-with tab_cf:
-    st.markdown("Pick one window. See what each policy would choose.")
+with tab_pareto:
+    st.divider()
+    st.markdown("##### Per-window what-if — what would each policy choose?")
     c1, c2, c3 = st.columns(3)
-    with c1: cf_n = st.number_input("Sample (window)", 0, N - 1, 0)
-    with c2: cf_h = st.number_input("Horizon step",    0, H - 1, 0)
-    with c3: cf_k = st.number_input("Cluster",         0, K - 1, 0)
+    with c1: cf_n = st.number_input("Window (sample)", 0, N - 1, 0)
+    with c2: cf_h = st.selectbox("Forecast lead", list(range(H)), index=0, format_func=lead_label, key="cf_h")
+    with c3: cf_k = st.selectbox("Region", list(range(K)), index=0, format_func=region_label, key="cf_k")
 
     p = float(pred_gbps[cf_n, cf_h, cf_k])
     a = float(tgt_gbps[cf_n, cf_h, cf_k])
