@@ -4,21 +4,23 @@
 `configs/scenario.yaml` now ships alpha=1.0, max_loss=5.0, prewarm=off, plus a fixed
 20 Mbps hysteresis band (fourth divergence, found during reconciliation — see §4).
 
-> ## THE CHAPTER IS NOW STALE
+> ## CHAPTER RE-RUN AND REWRITTEN (2026-07-21)
 >
-> `reports/chapter_digital_twin.tex` and every figure in `reports/figures/` were
-> computed under the OLD values and no longer match the shipped config. The headline
-> result changes by roughly an order of magnitude:
+> `reports/chapter_digital_twin.tex`, its five figures, and the built PDF have all been
+> regenerated under the reconciled config. The headline result changed by roughly an
+> order of magnitude:
 >
 > | | old (chapter) | reconciled |
 > |---|---|---|
 > | Hysteresis energy saving | **49.2 %** | **4.8 %** |
 > | Static USR energy saving | **37.3 %** | **−154.5 %** (costs more than DPDK) |
 > | Oracle ceiling | 51.0 % | **6.7 %** |
-> | Steps below decision threshold | 77.8 % | 13.7 % |
+> | Steps below decision threshold | 77.8 % | 14 % |
 >
-> Do not cite the chapter's numbers until it is re-run. The analysis below is
-> retained as the record of how this was decided.
+> The chapter's argument was rewritten, not merely renumbered — see "Chapter rewrite"
+> in the addendum for which passages changed and which claims were reversed. **The
+> rewritten narrative needs author review**: it now presents the twin's contribution as
+> bounding the achievable headroom rather than demonstrating a large saving.
 
 The sections below were written before the decision and describe the pre-reconciliation
 state.
@@ -319,3 +321,71 @@ agnostic):
 4. Scenario fields that both repos read (alpha, QoS budget, switching, band) should live
    in one file shipped by this package, with the controller overlaying only RL-specific
    blocks — so a divergence like this one becomes impossible rather than merely detectable.
+
+---
+
+# Chapter rewrite (2026-07-21)
+
+Figures and rollouts regenerated (`reports/make_figures.py`,
+`scripts/run_threshold_demo.py`), `.tex` updated, PDF rebuilt (15 pages).
+
+**Bug found while regenerating:** `make_figures.py` hardcoded
+`safety_margin_mbps=10.0` and always used the auto band, ignoring the scenario's
+`threshold:` block entirely. It would have rendered the degenerate always-DPDK
+hysteresis figure while the demo script rendered the correct one. Now reads the config,
+matching `run_threshold_demo.py`. The load-distribution histogram range was also
+hardcoded to 0–0.5 Gbps, which clipped the entire distribution at alpha=1.0; it now
+follows the data.
+
+## Numbers updated
+
+| Location | Was | Now |
+|---|---|---|
+| Eq. `eq:dt_alpha` | alpha = 0.12 | alpha = 1.0 |
+| Eq. `eq:dt_is_safe` | L_max = 0 (zero tolerance) | L_max = 5 pkts/interval |
+| QoS limit | 81 Mbps | 149 Mbps |
+| Decision threshold | 71 Mbps (QoS-limited) | 81 Mbps (energy-limited) |
+| Hysteresis band | 26.6 Mbps (auto, from 13.3 Mbps MAE) | 20 Mbps fixed |
+| Switch points | 71 / 44 Mbps | 81 / 61 Mbps |
+| Steps below threshold | 78 % | 14 % |
+| Table `tab:dt_metrics` | 3 rows | 5 rows (adds Threshold + Oracle bound) |
+
+## Claims reversed — these need author review
+
+1. **"Why energy-aware switching pays"** (retitled *"How much room is there for
+   energy-aware switching?"*). The old section argued 78 % of steps sit below the
+   threshold so a controller recovers most of DPDK's cost. That is now 14 %. The section
+   was rewritten to establish the 6.7 % oracle bound *before* presenting controllers,
+   and to attribute the narrow headroom to a physical capacity mismatch (USR saturates
+   at 91–149 Mbps; alpha=1 puts loads at 0.11–1.66 Gbps mean, 5.8 Gbps peak).
+
+2. **Static USR framing.** Previously "cheap but unsafe" (saves 37 %, unsafe 18.8 %).
+   Now it is the *most expensive* option: 2.5x DPDK's energy, unsafe on 70.3 % of steps.
+   The intuition that the software UPF is the cheap option now holds only below the knee,
+   and the chapter says so explicitly.
+
+3. **The demonstration claim** (summary item 5). Was "recovers 49 % of DPDK's energy."
+   Now "recovers 4.8 % — roughly 72 % of the 6.7 % available to an informed oracle."
+   A sixth summary item was added on bounded headroom, arguing that establishing the
+   bound is itself the result and that UPF *capacity*, not control policy, is the
+   dominant lever in this deployment.
+
+4. **Anti-flapping section.** Now reports the auto-band failure mode explicitly: the band
+   inherits alpha through the forecast MAE, reaching 221 Mbps at alpha=1.0 — wider than
+   the 81 Mbps threshold — which clamps `t_down` to 0 and silently degenerates hysteresis
+   into static DPDK. Eq. `eq:dt_band` is retained as the principled default; the fixed
+   20 Mbps band actually used is now Eq. `eq:dt_band_used`.
+
+5. **Prewarm.** Now stated as disabled, with the cold-start spikes visible in the rollout
+   figure and a note that this is the more conservative accounting.
+
+The alpha passage additionally states plainly that alpha is a *declared modelling
+assumption, not a recovered calibration*, gives the reason (NetMob is dimensionless;
+no scaler exists to fit), and cross-references the controller chapter.
+
+## Still open
+
+The concern recorded above stands and is now visible in the chapter itself: the oracle
+bound is 6.7 % and the best classical controller reaches 4.8 %. Whether a learned policy
+can justify its complexity against a 1.9 pp gap is a question for the controller chapter,
+and worth settling before either chapter goes to print.
