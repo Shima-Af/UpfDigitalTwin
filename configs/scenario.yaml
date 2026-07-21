@@ -1,4 +1,13 @@
 # configs/scenario.yaml — scenario and twin parameters
+#
+# RECONCILIATION NOTICE (2026-07-21): three fields below diverge from the
+# downstream RL-controller consumer's scenario file — alpha_gbps_per_norm,
+# upf.qos_budget.max_loss_pkts_per_interval, and upf_switching.prewarm.
+# All three are magnitude-affecting and are pending an author decision; see
+# reports/scenario_reconciliation.md for measured impact and recommendations.
+# The values here are the ones under which reports/chapter_digital_twin.tex
+# was computed. Do not change them without re-running the chapter figures
+# and threshold demo, or the chapter and the package fall out of sync.
 
 # --- Traffic ---
 traffic:
@@ -7,6 +16,10 @@ traffic:
 
   calibration:
     mode: global_alpha      # only supported mode for now
+    # DECLARED ASSUMPTION, not a recovered scaler: NetMob is dimensionless by
+    # construction, so no physical Gbps scaler exists to look up. At 0.12 the
+    # fleet peaks at 0.70 Gbps and 77.8% of steps sit below the decision
+    # threshold. See reconciliation notice at the top of this file.
     alpha_gbps_per_norm: 0.12  # 1 normalised unit = 0.12 Gbps
 
   time_step_minutes: 15     # NetMob resolution
@@ -15,6 +28,9 @@ traffic:
 upf:
   qos_budget:
     delay_budget_us:           200.0  # downlink delay must be ≤ this
+    # NOTE: this feeds threshold derivation as well as is_safe. Raising it to
+    # 5.0 moves the QoS limit 81 -> 149 Mbps and the decision threshold
+    # 71 -> 81 Mbps, flipping the binding constraint from QoS to energy.
     max_loss_pkts_per_interval:  0.0  # zero tolerance for predicted packet loss
 
 # --- Threshold derivation (replaces hardcoded thresholds) ---
@@ -39,6 +55,8 @@ upf_switching:
   # Prewarm: keep DPDK in standby (always-on) so we pay continuous standby cost
   # but switching is instant from the model's perspective.  When false, DPDK
   # cold-starts and the activation cost above applies.
+  # NOTE: disabling prewarm raises reported savings by ~5-6 pp (static USR
+  # 37.3 -> 43.4%, hysteresis 49.2 -> 53.8%). Safety metrics are unaffected.
   prewarm:
     enabled: true
     standby_power_watts: 0.05
