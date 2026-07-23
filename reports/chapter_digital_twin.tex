@@ -92,6 +92,18 @@ repository structure of the implementation, in which the twin is a
 \code{pip}-installable library that the controller project depends on but
 never modifies.
 
+\paragraph{Place in the thesis.} Within this thesis's theme of \emph{augmented
+observability} for the 5/6G data plane, the twin extends the observability
+envelope along its \emph{counterfactual} axis, and this is the deepest extension
+of the three. The profiling campaign made the present observable and the
+forecaster made the near future observable, but both concern the state the system
+is actually in. The twin makes observable the states it is \emph{not} in: the
+power, QoS, and safety that \emph{would} result under the realisation that is not
+currently running. Runtime control between two \upf{} realisations is impossible
+to reason about without this---choosing requires comparing an outcome that is
+being observed against one that never occurred---and it is exactly the signal the
+controllers in Chapter~\ref{chap:controllers} consume when they weigh a switch.
+
 The remainder of the chapter proceeds as follows.
 Section~\ref{sec:dt_from_profiling} bridges the profiling results to a
 predictive surrogate and justifies which trained variants the twin actually
