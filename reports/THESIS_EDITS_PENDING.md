@@ -6,7 +6,7 @@ Delete each entry once applied.
 
 ---
 
-## 1. Energy-spike rule — REPLACE Eq. (dt_spike) and its surrounding text
+## 1. Energy-spike rule — ✅ DONE 2026-07-23 (applied in chapter; kept for record)
 
 **Where:** subsection "Activation duration and the energy-spike rule"
 (~line 377–390, the paragraph after the activation-duration paragraph).
