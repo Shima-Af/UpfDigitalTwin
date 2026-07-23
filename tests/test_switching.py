@@ -30,7 +30,7 @@ def test_sub_step_weighted_average_power_and_spike(make_result, bare_twin):
     new = make_result(upf="USR", power=0.5)
     composite, sw_wh, new_current, pending = twin.compute_step("DPDK", "USR", old, new)
     assert composite.power_watts == pytest.approx(0.4 * 1.0 + 0.6 * 0.5)  # 0.7
-    assert sw_wh == pytest.approx(0.5 * 4.0 / 3600.0)                     # spike only
+    assert sw_wh == pytest.approx(0.01)   # constant USR spike (load-independent)
     assert new_current == "USR"
     assert pending is False
 
@@ -54,7 +54,7 @@ def test_round_down_is_instant_switch(make_result, bare_twin):
     assert composite.power_watts == pytest.approx(0.5)   # new UPF for the full step
     assert new_current == "USR"
     assert pending is False
-    assert sw_wh == pytest.approx(0.5 * 1.0 / 3600.0)    # default act_usr_s=1.0
+    assert sw_wh == pytest.approx(0.01)                  # constant USR spike
 
 
 def test_switch_safety_is_conservative(make_result, bare_twin):

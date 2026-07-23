@@ -56,12 +56,16 @@ def bare_twin():
         act_dpdk_s: float = 2.0,
         act_usr_s: float = 1.0,
         step_s: float = 900.0,
+        spike_dpdk_wh: float = 0.02,
+        spike_usr_wh: float = 0.01,
     ) -> DigitalTwin:
         twin = object.__new__(DigitalTwin)
         twin.accounting = accounting
         twin.prewarm_enabled = prewarm_enabled
         twin.prewarm_standby_w = prewarm_standby_w
         twin.activation_duration_s = {"DPDK": act_dpdk_s, "USR": act_usr_s}
+        # Per-variant switching energy is now a load-independent constant.
+        twin.switch_spike_wh = {"DPDK": spike_dpdk_wh, "USR": spike_usr_wh}
         twin.step_s = step_s
         twin.step_h = step_s / 3600.0
         return twin

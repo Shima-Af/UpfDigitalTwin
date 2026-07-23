@@ -75,6 +75,15 @@ class DigitalTwin:
             "DPDK": float(sc["activation_duration_s"]["dpdk"]),
             "USR":  float(sc["activation_duration_s"]["usr"]),
         }
+        # Per-variant switching energy — a load-independent CONSTANT. Activation
+        # happens at zero traffic (the new UPF is not serving yet), so the spike
+        # is anchored to zero-traffic power, not the current serving load. See
+        # switching_costs.yaml `calibration` block for the rebased-burst derivation.
+        spike = sc["calibration"]["spike_wh"]
+        self.switch_spike_wh: dict[str, float] = {
+            "DPDK": float(spike["dpdk"]),
+            "USR":  float(spike["usr"]),
+        }
 
         # Time-step in seconds + hours
         self.step_s = float(scenario_cfg["traffic"]["time_step_minutes"]) * 60.0
@@ -166,9 +175,11 @@ class DigitalTwin:
         if requested_action == current_action:
             return old_result, standby_wh, current_action, False
 
-        # Case B: switch requested
+        # Case B: switch requested. Spike is a per-variant constant (zero-traffic
+        # activation energy); activation_s is still used below to blend the
+        # sub-step serving power, not to scale the spike.
         activation_s = self.activation_duration_s.get(requested_action, 0.0)
-        spike_wh = new_result.power_watts * activation_s / 3600.0
+        spike_wh = self.switch_spike_wh.get(requested_action, 0.0)
 
         if self.accounting == "round_down":
             frac_old = 0.0
